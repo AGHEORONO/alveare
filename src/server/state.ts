@@ -38,7 +38,9 @@ export function snapshot(hive: Hive, hooks: HookIngest) {
     };
   });
 
-  const tasks = hive.tasks().map((t) => ({ ...taskFull(hive, t), updated_at: t.updated_at }));
+  const stale = new Set(hive.staleTasks().map((t) => t.id));
+  const tasks = hive.tasks().map((t) => ({ ...taskFull(hive, t), updated_at: t.updated_at, stale: stale.has(t.id) }));
+  const merge_queue = hive.mergeQueue().map((t) => ({ id: t.id, title: t.title, branch: t.branch, owner: nameOf(hive, t.owner_id), approved_at: t.updated_at }));
 
   const claims = hive.activeClaims().map((c) => ({ ...claimView(hive, c), expires_at: c.expires_at }));
 
@@ -58,6 +60,7 @@ export function snapshot(hive: Hive, hooks: HookIngest) {
     agents,
     tasks,
     claims,
+    merge_queue,
     unclaimed: unclaimed.map((u) => ({ path: u.path, by: nameOf(hive, u.agent_id), ts: u.ts, count: u.n })),
     feed,
   };
@@ -93,6 +96,7 @@ function feedItem(hive: Hive, e: EventRow): { id: number; ts: number; kind: stri
     case 'session_end': return { ...base, text: 'ended a Claude session' };
     case 'todo_done': return { ...base, text: `completed todo: ${d.title ?? ''}` };
     case 'code_rotated': return { ...base, text: 'rotated the join code' };
+    case 'task_merged': return { ...base, text: d.merged ? `merged ${d.branch} (task #${e.task_id})` : `un-marked ${d.branch} as merged` };
     default: return { ...base, text: e.kind };
   }
 }

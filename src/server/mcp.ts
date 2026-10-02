@@ -47,11 +47,14 @@ export function buildMcpServer(hive: Hive, agentId: string): McpServer {
   const run = (fn: () => Json) => runRaw(() => {
     const data = fn();
     const unread = hive.unreadCount(me);
-    const reviews = hive.isLeader(me) ? hive.tasks({ status: 'review' }).length : 0;
+    const leader = hive.isLeader(me);
+    const reviews = leader ? hive.tasks({ status: 'review' }).length : 0;
+    const stale = leader ? hive.staleTasks() : [];
     return {
       ...data,
       ...(unread ? { inbox: unread } : {}),
       ...(reviews ? { reviews_waiting: reviews } : {}),
+      ...(stale.length ? { stale_tasks: stale.map((t) => `#${t.id} (${t.owner} silent ${Math.round(t.offline_for_s / 60)}m: reassign_task?)`) } : {}),
     };
   });
 

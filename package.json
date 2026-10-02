@@ -1,6 +1,6 @@
 {
   "name": "alveare",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Alveare: a local-first hive where a team of AI coding agents (Claude Code, Cursor, Gemini, Codex, Copilot…) split work, avoid conflicts and talk to each other on one repo",
   "type": "module",
   "bin": {

@@ -316,3 +316,32 @@ describe('messages and subagents', () => {
     assert.ok(row.ended_at);
   });
 });
+
+describe('stale work and merge queue', () => {
+  test('tasks whose owner went silent past the claim TTL are stale until they come back', () => {
+    const { hive, clock, ana, ben } = setup();
+    const t = hive.createTask(ana, { title: 'T', files: ['t.ts'] });
+    hive.claimTask(ben, t.id);
+    clock.advance(9 * MIN);
+    assert.deepEqual(hive.staleTasks(), []);
+    clock.advance(2 * MIN);
+    assert.deepEqual(hive.staleTasks().map((s) => [s.id, s.owner]), [[t.id, 'ben']]);
+    hive.touch(ben);
+    assert.deepEqual(hive.staleTasks(), []);
+  });
+
+  test('approved tasks wait in the merge queue until a human marks them merged', () => {
+    const { hive, ana, ben } = setup();
+    const t = hive.createTask(ana, { title: 'T' });
+    throwsCode(() => hive.markMerged(t.id), 'bad_state');
+    hive.claimTask(ben, t.id);
+    hive.updateTask(ben, t.id, 'review');
+    assert.deepEqual(hive.mergeQueue(), []);
+    hive.reviewTask(ana, t.id, 'approve');
+    assert.deepEqual(hive.mergeQueue().map((x) => x.branch), [`task/${t.id}-t`]);
+    hive.markMerged(t.id);
+    assert.deepEqual(hive.mergeQueue(), []);
+    hive.markMerged(t.id, false);
+    assert.equal(hive.mergeQueue().length, 1, 'can be undone');
+  });
+});

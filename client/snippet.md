@@ -20,7 +20,7 @@ When the user says "start hive workflow" (or at the start of any coding work), f
 2. Loop:
    - answer messages
    - `list_tasks(status:"review")`, then `review_task` on each: approve, or `changes_requested` with concrete notes
-   - reassign blocked work, or the work of agents that went offline (`list_agents`)
+   - reassign blocked work, or the work of agents that went offline (`list_agents`). Results include `"stale_tasks"` when a worker has gone silent while holding a task.
    - resolve claim conflicts, using `force_release` only if the holder is gone
    - `post_status` every few completed tasks
 3. Humans merge approved branches. Do not merge yourself.

@@ -193,6 +193,14 @@ details[open] > :not(summary) { animation: rise .2s ease both; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .row label { font-size: 13px; color: var(--muted); }
 
+/* merge queue */
+.merge { display: grid; gap: 10px; padding: 14px; border-radius: var(--radius); background: var(--honey-soft); border: 1px solid var(--honey-line); animation: rise .3s ease both; }
+.merge h3 { font: 700 18px var(--display); }
+.merge h3 .plain { font-size: 13px; }
+.merge ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.merge .cell { flex-wrap: wrap; }
+.merge-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
 /* waggle feed */
 .segmented { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
 .segmented button { flex: 1; min-height: 36px; border: none; border-radius: 9px; background: transparent; color: var(--text-2); font: 500 13px var(--sans); cursor: pointer; transition: background-color .2s ease, color .2s ease; }

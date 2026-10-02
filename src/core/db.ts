@@ -153,6 +153,8 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX events_ts ON events(ts);
   `,
+  // v2: humans mark approved branches as merged (merge queue on the dashboard)
+  `ALTER TABLE tasks ADD COLUMN merged_at INTEGER;`,
 ];
 
 export function openDb(file: string): DB {

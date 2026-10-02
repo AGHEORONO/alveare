@@ -96,6 +96,7 @@ function render() {
   renderBanner();
   patch('team-list', teamHtml());
   flip('board-cols', () => patch('board-cols', boardHtml()));
+  patch('merge-wrap', mergeHtml());
   patch('unclaimed', unclaimedHtml());
   patch('claim-list', claimsHtml());
   patch('feed-list', feedHtml());
@@ -252,7 +253,7 @@ function taskHtml(t, byId, names) {
     </div>` : ''}`;
   const justCapped = t.status === 'done' && prevStatus.size && prevStatus.get(t.id) && prevStatus.get(t.id) !== 'done';
   return `<li class="task s-${t.status} ${justCapped ? 'capped' : ''}" id="task-${t.id}" data-flip="task-${t.id}" tabindex="-1">
-    <div class="task-top"><span class="task-id">#${t.id}</span><span>P${t.pri}</span>${t.status === 'blocked' ? '<span class="chip blocked">blocked</span>' : ''}</div>
+    <div class="task-top"><span class="task-id">#${t.id}</span><span>P${t.pri}</span>${t.status === 'blocked' ? '<span class="chip blocked">blocked</span>' : ''}${t.stale ? '<span class="chip blocked">owner silent</span>' : ''}</div>
     <div class="task-title">${esc(t.title)}</div>
     <div class="task-meta">
       <span class="owner"><span class="mini-av" aria-hidden="true">${t.owner ? initial(t.owner) : '·'}</span>${t.owner ? esc(t.owner) : 'unowned'}</span>
@@ -268,6 +269,24 @@ function taskHtml(t, byId, names) {
       ${controls}
     </details>
   </li>`;
+}
+
+const mergeCommand = (branch) => `git checkout main && git pull && git merge --no-ff ${branch} && git push`;
+
+function mergeHtml() {
+  const q = state.merge_queue ?? [];
+  if (!q.length) return '';
+  return `<section class="merge" aria-labelledby="merge-h">
+    <h3 id="merge-h">Ready to merge <span class="plain">· approved by the queen, waiting for a human</span></h3>
+    <ul>${q.map((m) => `<li class="cell">
+      ${ICON.cell}
+      <div class="cell-body"><span><a href="#task-${m.id}" id="mq-${m.id}">#${m.id}</a> ${esc(m.title)} · by ${esc(m.owner ?? '?')}</span><code>${esc(m.branch)}</code></div>
+      <div class="merge-actions">
+        <button type="button" class="btn small" id="mq-copy-${m.id}" data-action="copy_merge" data-branch="${esc(m.branch)}" aria-label="Copy merge command for ${esc(m.branch)}">Copy command</button>
+        <button type="button" class="btn honey small" id="mq-done-${m.id}" data-action="mark_merged" data-id="${m.id}" aria-label="Mark #${m.id} as merged">Mark merged</button>
+      </div>
+    </li>`).join('')}</ul>
+  </section>`;
 }
 
 function unclaimedHtml() {
@@ -369,6 +388,14 @@ document.addEventListener('click', async (e) => {
       if (d.verdict === 'changes_requested' && !notes) return;
       return act({ action: 'review', id, verdict: d.verdict, notes }, `Task ${id} ${d.verdict === 'approve' ? 'approved' : 'sent back'}`);
     }
+    case 'copy_merge': {
+      const cmd = mergeCommand(d.branch);
+      try { await navigator.clipboard.writeText(cmd); announce('Merge command copied'); btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy command'; }, 1800); }
+      catch { toast(cmd); } // plain http on a LAN: clipboard may be blocked, so show it instead
+      return;
+    }
+    case 'mark_merged':
+      return act({ action: 'mark_merged', id }, `Task ${id} marked as merged`);
     case 'release':
       if (!confirm(`Unlock ${d.path}? The bee holding it will be told.`)) return;
       return act({ action: 'release', path: d.path }, `Unlocked ${d.path}`);

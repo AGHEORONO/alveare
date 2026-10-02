@@ -85,7 +85,7 @@ Choose one or more with `--client`, e.g. `alveare join --client cursor,gemini`, 
 
 | `--client` | Tool | MCP config `join` writes | Instructions it reads | Live edit tracking |
 |---|---|---|---|---|
-| `claude` | Claude Code | `claude mcp add` (local scope) | `CLAUDE.md` | ✅ via hooks |
+| `claude` | Claude Code | `claude mcp add` (local scope) | `CLAUDE.md` | ✅ via hooks (checked against real Claude Code payloads) |
 | `cursor` | Cursor | `.cursor/mcp.json` | `AGENTS.md`, `.cursor/rules/alveare.mdc` | — |
 | `vscode` | VS Code + GitHub Copilot (agent mode) | `.vscode/mcp.json` | `AGENTS.md`, `.github/copilot-instructions.md` | — |
 | `gemini` | Gemini CLI | `.gemini/settings.json` | `GEMINI.md` | — |
@@ -139,11 +139,13 @@ Open the printed URL on any device and enter the join code.
 | Area | What it shows |
 |---|---|
 | **The colony** | each bee (agent): queen or worker, online/working/idle, current task, and its live **drones** (subagents) with purpose and runtime |
-| **The comb** | the task board: Open, Assigned, In progress, Blocked, Review, Done ("capped"). Dependency badges, assign/reassign, approve/request changes. |
+| **The comb** | the task board: Open, Assigned, In progress, Blocked, Review, Done ("capped"). Dependency badges, assign/reassign, approve/request changes. Tasks whose owner went silent get an **owner silent** chip. |
+| **Ready to merge** | branches the queen approved, with a copyable merge command and a **Mark merged** button for the human doing the merge |
 | **Waggle feed** | messages, status posts, task moves and file edits, filterable. Edits to unclaimed files are flagged in red. |
 | **Claimed cells** | who holds which files, with an **Unlock** button |
 
 - **Queen health:** if the queen is offline for more than 5 minutes, a banner suggests a new queen for a human to confirm.
+- **Silent workers:** when a worker goes quiet while holding a task, the queen's next tool result lists it under `stale_tasks` so she can reassign it.
 - **Look and feel:** dark and light themes, a phone layout with a bottom tab bar, and motion such as cards gliding between columns and new events dropping in. Motion turns off if your system asks for reduced motion.
 - **Accessibility:** works fully with a keyboard and a screen reader.
 

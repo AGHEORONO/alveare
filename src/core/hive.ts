@@ -24,6 +24,7 @@ export interface TaskRow {
   id: number; title: string; description: string; acceptance: string; status: TaskStatus;
   blocked_from: TaskStatus | null; owner_id: string | null; priority: number; branch: string | null;
   review_notes: string | null; created_by: string | null; created_at: number; updated_at: number;
+  merged_at: number | null;
 }
 export interface ClaimRow {
   id: number; agent_id: string; pattern: string; task_id: number | null;
@@ -476,6 +477,34 @@ export class Hive {
       this.event('task_reviewed', { agent_id: actor, task_id: id, data: { verdict, notes } });
       return { task: this.task(id), warnings };
     });
+  }
+
+  /**
+   * Started work whose owner has gone quiet for longer than the claim TTL: their claims are
+   * gone, so the task is effectively orphaned until someone reassigns it.
+   */
+  staleTasks(): { id: number; title: string; owner: string; offline_for_s: number }[] {
+    const now = this.now();
+    return this.tasks()
+      .filter((t) => (t.status === 'in_progress' || t.status === 'assigned') && t.owner_id)
+      .map((t) => ({ t, a: this.agent(t.owner_id!) }))
+      .filter(({ a }) => now - a.last_seen_at > this.claimTtlMs)
+      .map(({ t, a }) => ({ id: t.id, title: t.title, owner: a.name, offline_for_s: Math.round((now - a.last_seen_at) / 1000) }));
+  }
+
+  /** Approved branches a human still has to merge, oldest first. */
+  mergeQueue(): TaskRow[] {
+    return this.tasks({ status: 'done' }).filter((t) => !t.merged_at).sort((a, b) => a.updated_at - b.updated_at);
+  }
+
+  /** A human merged (or dismissed) an approved branch. */
+  markMerged(id: number, merged = true): TaskRow {
+    const t = this.task(id);
+    if (t.status !== 'done') throw new HiveError('bad_state', `task ${id} is ${t.status}; only approved (done) tasks can be merged`);
+    this.db.prepare('UPDATE tasks SET merged_at = ? WHERE id = ?').run(merged ? this.now() : null, id);
+    this.event('task_merged', { task_id: id, data: { branch: t.branch, merged } });
+    this.onChange('tasks');
+    return this.task(id);
   }
 
   private setTask(id: number, fields: Partial<Pick<TaskRow, 'status' | 'owner_id' | 'blocked_from' | 'review_notes'>>): void {
