@@ -4,13 +4,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { type Hive, TASK_STATUSES } from '../core/hive.js';
 import { ago, claimView, errorView, messageView, nameOf, taskBrief, taskFull } from '../core/format.js';
-
 import { VERSION } from '../version.js';
 export { VERSION };
 
-const INSTRUCTIONS = `Hive coordinates several Claude Code agents on one repo.
+const INSTRUCTIONS = `Alveare (hive) coordinates several AI coding agents on one repo.
 Start with whoami, read_messages, list_tasks. Never edit files claimed by others (check_files); message them or the leader.
-claim_task claims the task's files; claim_files before touching anything else. Set status "review" when done; only the leader approves.`;
+claim_task claims the task's files; claim_files before touching anything else. Set status "review" when done; only the leader approves.
+When a result contains "inbox", call read_messages before continuing.`;
 
 type Json = Record<string, unknown>;
 
@@ -19,7 +19,7 @@ function ok(data: Json) {
 }
 
 /** Run a tool body; HiveErrors become structured `{ok:false,...}` results flagged isError. */
-function run(fn: () => Json) {
+function runRaw(fn: () => Json) {
   try {
     return ok(fn());
   } catch (e) {
@@ -33,7 +33,27 @@ const paths = z.array(z.string().min(1)).min(1).describe('Repo-relative paths, d
 export function buildMcpServer(hive: Hive, agentId: string): McpServer {
   const server = new McpServer({ name: 'hive', version: VERSION }, { instructions: INSTRUCTIONS });
   const me = agentId;
-  const tool = server.registerTool.bind(server);
+  // Standard MCP hints: hive tools never touch files or the outside world; some only read.
+  const READ_ONLY = new Set(['whoami', 'list_agents', 'list_tasks', 'get_task', 'check_files']);
+  const tool: typeof server.registerTool = (name, config, cb) => server.registerTool(name, {
+    ...config,
+    annotations: { readOnlyHint: READ_ONLY.has(name), destructiveHint: false, openWorldHint: false, ...config.annotations },
+  }, cb);
+
+  /**
+   * MCP can't push into an agent's chat, so every successful result carries pending notices:
+   * unread messages for everyone, and tasks waiting for review for the queen.
+   */
+  const run = (fn: () => Json) => runRaw(() => {
+    const data = fn();
+    const unread = hive.unreadCount(me);
+    const reviews = hive.isLeader(me) ? hive.tasks({ status: 'review' }).length : 0;
+    return {
+      ...data,
+      ...(unread ? { inbox: unread } : {}),
+      ...(reviews ? { reviews_waiting: reviews } : {}),
+    };
+  });
 
   // ───────── all agents ─────────
 

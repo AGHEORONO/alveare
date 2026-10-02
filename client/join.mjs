@@ -183,7 +183,8 @@ export const CLIENTS = {
     register(root, url, token) {
       const file = pjoin(root, '.gemini', 'settings.json');
       const cfg = readJsonFile(file, {});
-      (cfg.mcpServers ??= {})[MCP_NAME] = { httpUrl: url, headers: { Authorization: `Bearer ${token}` } };
+      // trust: hive tools only change hive state (tasks, claims, messages), never files, so skip per-call prompts.
+      (cfg.mcpServers ??= {})[MCP_NAME] = { httpUrl: url, headers: { Authorization: `Bearer ${token}` }, trust: true };
       writeJsonFile(file, cfg);
       excludeFromGit(root, ['.gemini/settings.json']);
       return 'Gemini CLI: .gemini/settings.json (check with /mcp)';
@@ -197,10 +198,23 @@ export const CLIENTS = {
       const file = pjoin(process.env.CODEX_HOME ?? pjoin(homedir(), '.codex'), 'config.toml');
       mkdirSync(dirname(file), { recursive: true });
       const cur = existsSync(file) ? readFileSync(file, 'utf8') : '';
-      const block = `# >>> alveare (managed by alveare join)\n[mcp_servers.${MCP_NAME}]\nurl = "${url}"\nhttp_headers = { "Authorization" = "Bearer ${token}" }\n# <<< alveare\n`;
+      const block = `# >>> alveare (managed by alveare join)\n[mcp_servers.${MCP_NAME}]\nurl = "${url}"\nhttp_headers = { "Authorization" = "Bearer ${token}" }\n# hive tools only change hive state (tasks, claims, messages), never files: skip per-call prompts\ndefault_tools_approval_mode = "approve"\n# <<< alveare\n`;
       const re = /# >>> alveare[\s\S]*?# <<< alveare\n?/;
       writeFileSync(file, re.test(cur) ? cur.replace(re, block) : `${cur}${cur && !cur.endsWith('\n') ? '\n' : ''}${cur ? '\n' : ''}${block}`);
       return `Codex CLI: ${file} (check with /mcp)`;
+    },
+  },
+  opencode: {
+    label: 'opencode',
+    detect: () => hasCommand('opencode'),
+    instructions: ['AGENTS.md'],
+    register(root, url, token) {
+      const file = pjoin(root, 'opencode.json');
+      const cfg = readJsonFile(file, { $schema: 'https://opencode.ai/config.json' });
+      (cfg.mcp ??= {})[MCP_NAME] = { type: 'remote', url, headers: { Authorization: `Bearer ${token}` }, enabled: true };
+      writeJsonFile(file, cfg);
+      excludeFromGit(root, ['opencode.json']);
+      return 'opencode: opencode.json (check with: opencode mcp list)';
     },
   },
   other: {

@@ -22,6 +22,7 @@ const HELP = `alveare ${VERSION} — a hive for teams of AI coding agents on one
                  Pull a snapshot from a running host (any member; --every keeps a rolling backup).
   alveare import <file> [--force]         Restore a snapshot, then run alveare host.
   alveare status                          Show the hive this repo is joined to.
+  alveare doctor                          Diagnose joining, network and AI tool setup.
   alveare version`;
 
 async function ask(q: string): Promise<string> {
@@ -221,6 +222,7 @@ async function main() {
     case 'export': return exportCmd(rest);
     case 'import': return importCmd(rest);
     case 'status': return status();
+    case 'doctor': return (await import('./doctor.js')).doctor();
     case 'hook': return hookCmd(rest[0]);
     case 'version': case '--version': case '-v': console.log(VERSION); return;
     default: console.log(HELP); process.exit(cmd && cmd !== 'help' && cmd !== '--help' ? 2 : 0);

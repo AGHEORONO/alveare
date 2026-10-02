@@ -110,12 +110,15 @@ async function main() {
 
     console.log('\nmessages + review');
     await other.call('send_message', { to: 'leader', body: 'Should login use cookies?', task_id: id.ui });
+    const notice = await lead.call('list_agents');
+    check(notice.inbox === 1, `unread notice piggybacks on any tool result (inbox: ${notice.inbox})`);
     const inbox = await lead.call('read_messages');
     check(inbox.messages.some((m: { body: string }) => m.body.includes('cookies')), 'leader received the question');
     await lead.call('send_message', { to: 'all', body: 'Use cookies.' });
     check((await m1.call('read_messages')).messages.some((m: { body: string }) => m.body === 'Use cookies.'), 'broadcast delivered');
     const rv = await other.call('update_task', { id: id.ui, status: 'review', note: 'done' });
     check(rv.ok && rv.status === 'review', 'member set review');
+    check((await lead.call('whoami')).reviews_waiting === 1, 'queen sees reviews_waiting on her next call');
     check((await lead.call('review_task', { id: id.ui, verdict: 'approve' })).status === 'done', 'leader approved');
 
     console.log('\nleadership transfer');

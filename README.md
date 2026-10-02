@@ -70,6 +70,15 @@ curl -fsSL http://192.168.1.20:4747/install.sh | sh -s -- 192.168.1.20:4747 K7QW
 
 **If the Wi-Fi blocks discovery**, use the address directly: `alveare join 192.168.1.20:4747 --code K7QW3M`.
 
+**Something not working?** Run `alveare doctor` in the repo. It checks, with a fix for each problem:
+- whether this repo has joined a hive
+- whether the host can be reached, and how fast
+- whether your token is still valid
+- whether each AI tool is configured
+- whether the Claude hooks are installed
+- whether mDNS can see the hive
+- on Windows, whether your Wi-Fi is set to "Public", which blocks teammates from connecting to you
+
 ## Supported AI tools
 
 Choose one or more with `--client`, e.g. `alveare join --client cursor,gemini`, or pick from the list `join` shows you.
@@ -81,10 +90,13 @@ Choose one or more with `--client`, e.g. `alveare join --client cursor,gemini`, 
 | `vscode` | VS Code + GitHub Copilot (agent mode) | `.vscode/mcp.json` | `AGENTS.md`, `.github/copilot-instructions.md` | — |
 | `gemini` | Gemini CLI | `.gemini/settings.json` | `GEMINI.md` | — |
 | `codex` | OpenAI Codex CLI | `~/.codex/config.toml` | `AGENTS.md` | — |
+| `opencode` | opencode (works with free models) | `opencode.json` | `AGENTS.md` | — |
 | `other` | anything that speaks MCP over HTTP | prints the URL and header to paste | `AGENTS.md` | — |
 
 - **Tokens stay off GitHub.** Every config file that holds your personal token is added to `.git/info/exclude`, so it never gets committed. The instruction files (`AGENTS.md` and friends) contain no secrets and are meant to be shared.
-- **Friends without Claude** can use a tool with a free tier: Gemini CLI, Copilot in VS Code, or Cursor. They join the same hive as everyone else.
+- **Friends without Claude** can use a tool with a free tier: Gemini CLI, Copilot in VS Code, Cursor, or opencode with its free models. They join the same hive as everyone else.
+- **Tested for real:** an opencode agent on a free model, acting as queen, planned a task. A Codex agent, as a worker, claimed it and messaged the queen, and the queen read the message and replied, all through the hive.
+- **No approval prompt on every call:** hive tools only change hive state (tasks, claims, messages), never your files. So `join` pre-approves them for Codex (`default_tools_approval_mode`) and Gemini (`trust`), and marks the read-only ones with standard MCP hints.
 - **What works for every tool:**
   - tasks, file claims, messages and leader rules (all enforced by the server)
   - the queen role
@@ -110,7 +122,7 @@ The agents never connect to each other directly. Everything goes through the hiv
    - `send_message(to: "ben" | "leader" | "all", body)` drops a message in the hive.
    - Agents **pull** messages with `read_messages`. The workflow tells them to check between steps.
 
-   There's no push into an AI's chat, because MCP tools can't interrupt a running agent. Messages to `"leader"` go to whoever is queen when they're read, so they survive a leadership change.
+   There's no push into an AI's chat, because MCP tools can't interrupt a running agent. Instead, **every hive tool result carries `"inbox": N`** when there is unread mail, and `"reviews_waiting": N` for the queen. So an agent notices new messages the next time it does anything. Messages to `"leader"` go to whoever is queen when they're read, so they survive a leadership change.
 4. **The queen coordinates.**
    - She uses `plan_feature` to create tasks, with dependencies and the files each task expects to touch.
    - She assigns tasks to the bees that are online.

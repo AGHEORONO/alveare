@@ -31,6 +31,10 @@ test('host handover: export → import on a new server keeps tasks, claims, mess
     assert.deepEqual([ev.path, ev.flag], ['src/y.ts', 'unclaimed']);
     assert.ok(!JSON.stringify(ev).includes('SECRET'));
 
+    // token check used by `alveare doctor`
+    assert.equal((await fetch(`${base}/api/me`)).status, 401);
+    assert.deepEqual(await (await fetch(`${base}/api/me`, { headers: { authorization: `Bearer ${mem.token}` } })).json(), { ok: true, name: 'mem', role: 'member' });
+
     // export requires auth; a member token works
     assert.equal((await fetch(`${base}/api/export`)).status, 401);
     const exp = await fetch(`${base}/api/export`, { headers: { authorization: `Bearer ${mem.token}` } });

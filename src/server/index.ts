@@ -107,6 +107,13 @@ export async function startServer(opts: ServerOptions): Promise<HiveServer> {
       joinAttempts.set(ip, [...(joinAttempts.get(ip) ?? []), Date.now()]);
     };
 
+    // Token check for `alveare doctor`.
+    if (path === '/api/me' && method === 'GET') {
+      const agent = bearerAgent(req);
+      if (!agent) return json(res, 401, { ok: false, error: 'token not recognized by this hive' });
+      return json(res, 200, { ok: true, name: agent.name, role: hive.isLeader(agent.id) ? 'leader' : 'member' });
+    }
+
     if (path === '/api/join' && method === 'POST') {
       if (limited()) return;
       const ip = req.socket.remoteAddress ?? '?';

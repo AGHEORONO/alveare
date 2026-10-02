@@ -324,8 +324,9 @@ setInterval(tick, 1000);
 // ───────────── actions ─────────────
 
 function toast(msg) {
-  $('toast-msg').textContent = msg;
   $('toast').hidden = false;
+  $('toast-msg').textContent = '';
+  setTimeout(() => { $('toast-msg').textContent = msg; }, 50); // announce even when the text repeats
   document.body.classList.add('has-toast');
 }
 function hideToast() {
@@ -397,7 +398,7 @@ $('copy-code').addEventListener('click', async () => {
 $('pause').addEventListener('click', () => {
   paused = !paused;
   $('pause').setAttribute('aria-pressed', String(paused));
-  $('pause').textContent = paused ? 'Resume' : 'Pause';
+  document.body.classList.toggle('paused', paused);
   if (!paused && latest) { state = latest; render(); setConn('live', 'live'); }
   announce(paused ? 'Live updates paused' : 'Live updates resumed');
 });
@@ -414,18 +415,24 @@ for (const b of document.querySelectorAll('.tabbar button')) {
   b.addEventListener('click', () => {
     document.body.dataset.view = b.dataset.view;
     for (const x of document.querySelectorAll('.tabbar button')) {
-      if (x === b) x.setAttribute('aria-current', 'page'); else x.removeAttribute('aria-current');
+      if (x === b) x.setAttribute('aria-current', 'true'); else x.removeAttribute('aria-current');
     }
     window.scrollTo({ top: 0 });
     $(`${b.dataset.view}-h`)?.focus({ preventScroll: true });
   });
 }
 
-// Jumping to a task from anywhere (e.g. the colony on a phone) switches to the comb tab.
-addEventListener('hashchange', () => {
-  if (location.hash.startsWith('#task-') && innerWidth < 900) document.querySelector('.tabbar button[data-view="comb"]').click();
-  const el = document.querySelector(location.hash);
-  if (el) { el.scrollIntoView({ block: 'center' }); el.focus({ preventScroll: true }); }
+// Jumping to a task from anywhere (e.g. the colony on a phone) switches to the comb tab and
+// moves focus there, even when the same link is used twice (no hashchange in that case).
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[href^="#task-"]');
+  if (!a) return;
+  e.preventDefault();
+  if (innerWidth < 900) document.querySelector('.tabbar button[data-view="comb"]').click();
+  const el = document.querySelector(a.hash);
+  el?.scrollIntoView({ block: 'center' });
+  el?.focus({ preventScroll: true });
+  history.replaceState(null, '', a.hash);
 });
 
 // ───────────── connection ─────────────

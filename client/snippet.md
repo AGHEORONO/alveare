@@ -7,7 +7,7 @@ When the user says "start hive workflow" (or at the start of any coding work), f
 ### Always
 - Start with `whoami`, `read_messages`, `list_tasks`.
 - Never edit a file claimed by someone else. If in doubt, run `check_files`. If you need a file someone else holds, `send_message` its owner or `"leader"`, and work on something else meanwhile.
-- Call `read_messages` between steps and answer questions addressed to you. Messages are not pushed to you; you only see them when you check.
+- Call `read_messages` between steps and answer questions addressed to you. Messages are not pushed to you, but any hive tool result that contains `"inbox": N` means you have N unread messages: read them before continuing. The queen also sees `"reviews_waiting": N`.
 - Hive tool results are JSON. If `ok` is false, read `error` and follow `do`.
 - If your tool has no Hive hooks (anything other than Claude Code), call `heartbeat` every few minutes during long work so your file claims don't expire.
 
