@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Hive dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2l12 7v14l-12 7-12-7V9z' fill='%23d97706'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <section id="login" class="login" hidden aria-labelledby="login-title">
+    <form id="login-form" class="card">
+      <h1 id="login-title">Hive</h1>
+      <p>Enter the join code shown in the host's terminal.</p>
+      <label for="code">Join code</label>
+      <input id="code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" maxlength="12" required aria-describedby="login-error">
+      <p id="login-error" class="error" role="alert"></p>
+      <button type="submit" class="primary">Open dashboard</button>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <header class="top">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">⬢</span>
+        <h1><span id="session">Hive</span> <span class="sub">dashboard</span></h1>
+      </div>
+      <dl class="facts">
+        <div><dt>Join code</dt><dd><code id="join-code">—</code> <button type="button" class="link" id="rotate">New code</button></dd></div>
+        <div><dt>Leader</dt><dd id="leader-name">—</dd></div>
+        <div><dt>Connection</dt><dd><span id="conn" class="conn">connecting…</span> <button type="button" id="pause" aria-pressed="false">Pause live updates</button></dd></div>
+      </dl>
+      <nav aria-label="Sections">
+        <ul>
+          <li><a href="#team">Team</a></li>
+          <li><a href="#board">Tasks</a></li>
+          <li><a href="#claims">Claims</a></li>
+          <li><a href="#feed">Activity</a></li>
+          <li><a href="/api/export" download>Export</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <div id="banner" class="banner" hidden></div>
+    <div id="announcer" class="visually-hidden" aria-live="polite" aria-atomic="false"></div>
+    <div id="toast" class="toast" hidden><p id="toast-msg" role="alert"></p><button type="button" id="toast-close">Dismiss</button></div>
+
+    <main id="main" tabindex="-1">
+      <section id="team" aria-labelledby="team-h">
+        <h2 id="team-h" tabindex="-1">Team</h2>
+        <ul id="team-list" class="team"></ul>
+      </section>
+
+      <section id="board" aria-labelledby="board-h">
+        <h2 id="board-h" tabindex="-1">Tasks</h2>
+        <div id="board-cols" class="board"></div>
+      </section>
+
+      <div class="split">
+        <section id="claims" aria-labelledby="claims-h">
+          <h2 id="claims-h" tabindex="-1">File claims</h2>
+          <div id="unclaimed"></div>
+          <div id="claim-list"></div>
+        </section>
+
+        <section id="feed" aria-labelledby="feed-h">
+          <h2 id="feed-h" tabindex="-1">Activity</h2>
+          <ol id="feed-list" class="feed" tabindex="0" aria-label="Activity feed, newest first"></ol>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

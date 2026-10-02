@@ -1,0 +1,40 @@
+{
+  "name": "hive",
+  "version": "0.1.0",
+  "description": "Local-first coordination server for teams of Claude Code agents on one repo",
+  "type": "module",
+  "bin": {
+    "hive": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "prepare": "tsc -p .",
+    "host": "node dist/cli.js host",
+    "join": "node dist/cli.js join",
+    "test": "node --import tsx --test test/*.test.ts",
+    "sim": "tsx scripts/simulate.ts",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "better-sqlite3": "^13.0.3",
+    "bonjour-service": "^1.4.4",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "files": [
+    "dist",
+    "public",
+    "client",
+    "README.md"
+  ]
+}
