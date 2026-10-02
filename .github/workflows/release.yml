@@ -1,0 +1,49 @@
+name: Release
+
+# Push a tag like v0.2.0 to build standalone executables for every platform and attach them
+# to a GitHub release. The one-line installers download from the latest release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: gh release create "$GITHUB_REF_NAME" --title "Alveare $GITHUB_REF_NAME" --generate-notes || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    needs: create
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, asset: alveare-windows-x64.exe }
+          - { os: ubuntu-latest, asset: alveare-linux-x64 }
+          - { os: ubuntu-24.04-arm, asset: alveare-linux-arm64 }
+          - { os: macos-latest, asset: alveare-macos-arm64 }
+          - { os: macos-15-intel, asset: alveare-macos-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: node scripts/build-sea.mjs
+      - name: Smoke test
+        shell: bash
+        run: ./release/${{ matrix.asset }} version
+      - name: Upload
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" "release/${{ matrix.asset }}" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

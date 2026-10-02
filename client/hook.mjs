@@ -1,16 +1,15 @@
 #!/usr/bin/env node
-// Hive hook forwarder (installed by `hive join` into <repo>/.hive/hook.mjs).
-// Runs as an async Claude Code command hook: reads the hook JSON from stdin, keeps only a
-// small whitelist of fields (never prompts or tool output), and POSTs it to the Hive server.
-// Fire-and-forget: 1.5 s timeout, never prints, always exits 0.
+// Alveare hook forwarder for Claude Code. Installed by `alveare join` either as
+// <repo>/.hive/hook.mjs (run with node) or as `alveare hook <repo>/.hive/config.json` (standalone exe).
+// Runs as an async command hook: reads the hook JSON from stdin, keeps only a small whitelist of
+// fields (never prompts or tool output), and POSTs it to the hive. Fire-and-forget: 1.5 s timeout,
+// never prints, always exits 0.
 import { readFileSync } from 'node:fs';
 import { dirname, join, relative, isAbsolute, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url));
-
-async function main() {
-  const cfg = JSON.parse(readFileSync(join(here, 'config.json'), 'utf8'));
+export async function runHook(configPath) {
+  const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
   let raw = '';
   for await (const chunk of process.stdin) raw += chunk;
   const e = JSON.parse(raw);
@@ -46,4 +45,8 @@ async function main() {
   });
 }
 
-main().catch(() => {}).finally(() => process.exit(0));
+// Run directly: node .hive/hook.mjs  (config.json sits next to it)
+if (import.meta.url.endsWith('/hook.mjs') && process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const here = dirname(fileURLToPath(import.meta.url));
+  runHook(join(here, 'config.json')).catch(() => {}).finally(() => process.exit(0));
+}

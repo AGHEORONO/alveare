@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { type Hive, TASK_STATUSES } from '../core/hive.js';
 import { ago, claimView, errorView, messageView, nameOf, taskBrief, taskFull } from '../core/format.js';
 
-export const VERSION = '0.1.0';
+import { VERSION } from '../version.js';
+export { VERSION };
 
 const INSTRUCTIONS = `Hive coordinates several Claude Code agents on one repo.
 Start with whoami, read_messages, list_tasks. Never edit files claimed by others (check_files); message them or the leader.

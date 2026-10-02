@@ -1,9 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, statSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { extname, join, normalize, sep } from 'node:path';
+import { extname, join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { Hive, type HiveOptions, type TaskStatus } from '../core/hive.js';
 import { openDb } from '../core/db.js';
@@ -12,7 +12,10 @@ import { HiveError } from '../core/errors.js';
 import { errorView } from '../core/format.js';
 import { handleMcp } from './mcp.js';
 import { snapshot } from './state.js';
-import { CLIENT_DIR, PUBLIC_DIR } from '../paths.js';
+import { IS_SEA, readAsset } from '../paths.js';
+import { homedir } from 'node:os';
+import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 export interface ServerOptions extends HiveOptions {
   dbFile: string;
@@ -35,7 +38,7 @@ export interface HiveServer {
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json', '.md': 'text/markdown; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.sh': 'text/plain; charset=utf-8', '.ps1': 'text/plain; charset=utf-8', '.json': 'application/json', '.md': 'text/markdown; charset=utf-8',
 };
 const MAX_BODY = 1024 * 1024;
 const DASH_COOKIE = 'hive_dash';
@@ -181,15 +184,23 @@ export async function startServer(opts: ServerOptions): Promise<HiveServer> {
     }
 
     // Zero-dependency client files for teammates without Hive installed.
-    if (method === 'GET' && ['/join.mjs', '/hook.mjs', '/snippet.md'].includes(path)) {
-      return sendFile(res, join(CLIENT_DIR, path.slice(1)));
+    // Standalone binaries for the one-line installer, so teammates can install with no internet.
+    const dl = /^\/download\/(alveare-(?:windows|macos|linux)-(?:x64|arm64)(?:\.exe)?)$/.exec(path);
+    if (method === 'GET' && dl) {
+      const file = findBinary(dl[1]);
+      if (!file) return json(res, 404, { ok: false, error: 'this host has no copy of that binary' });
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': statSync(file).size });
+      createReadStream(file).pipe(res);
+      return;
+    }
+
+    if (method === 'GET' && ['/join.mjs', '/hook.mjs', '/snippet.md', '/install.sh', '/install.ps1'].includes(path)) {
+      return sendAsset(res, `client${path}`);
     }
 
     if (method === 'GET') {
       const rel = path === '/' ? 'index.html' : decodeURIComponent(path.slice(1));
-      const file = normalize(join(PUBLIC_DIR, rel));
-      if (!file.startsWith(PUBLIC_DIR + sep) && file !== PUBLIC_DIR) return json(res, 403, {});
-      return sendFile(res, file);
+      return sendAsset(res, `public/${rel}`);
     }
     json(res, 404, { ok: false });
   }
@@ -256,8 +267,25 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 }
 
-function sendFile(res: ServerResponse, file: string): void {
-  if (!existsSync(file) || !statSync(file).isFile()) return json(res, 404, { ok: false });
-  res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
-  createReadStream(file).pipe(res);
+function sendAsset(res: ServerResponse, rel: string): void {
+  const body = readAsset(rel);
+  if (!body) return json(res, 404, { ok: false });
+  res.writeHead(200, { 'content-type': MIME[extname(rel)] ?? 'application/octet-stream', 'cache-control': 'no-cache', 'content-length': body.length });
+  res.end(body);
+}
+
+/** Name of the release asset matching this machine, e.g. alveare-windows-x64.exe. */
+export function ownAssetName(): string {
+  const os = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux';
+  return `alveare-${os}-${process.arch === 'arm64' ? 'arm64' : 'x64'}${os === 'windows' ? '.exe' : ''}`;
+}
+
+/** This executable (when it is the requested platform), or a copy next to it / in ~/.alveare/bin. */
+function findBinary(asset: string): string | null {
+  if (IS_SEA && asset === ownAssetName()) return process.execPath;
+  for (const dir of [dirname(process.execPath), join(homedir(), '.alveare', 'bin')]) {
+    const f = join(dir, asset);
+    if (existsSync(f)) return f;
+  }
+  return null;
 }

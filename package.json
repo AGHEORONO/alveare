@@ -1,13 +1,14 @@
 {
-  "name": "hive",
-  "version": "0.1.0",
-  "description": "Local-first coordination server for teams of Claude Code agents on one repo",
+  "name": "alveare",
+  "version": "0.2.0",
+  "description": "Alveare: a local-first hive where a team of AI coding agents (Claude Code, Cursor, Gemini, Codex, Copilot…) split work, avoid conflicts and talk to each other on one repo",
   "type": "module",
   "bin": {
+    "alveare": "dist/cli.js",
     "hive": "dist/cli.js"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "build": "tsc -p .",
@@ -16,18 +17,19 @@
     "join": "node dist/cli.js join",
     "test": "node --import tsx --test test/*.test.ts",
     "sim": "tsx scripts/simulate.ts",
+    "build:exe": "node scripts/build-sea.mjs",
     "typecheck": "tsc -p . --noEmit"
   },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "better-sqlite3": "^13.0.3",
     "bonjour-service": "^1.4.4",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "^26.6.4",
+    "@types/node": "^24.19.1",
+    "esbuild": "^0.28.2",
+    "postject": "^1.0.0-alpha.6",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },
@@ -36,5 +38,17 @@
     "public",
     "client",
     "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AGHEORONO/alveare.git"
+  },
+  "keywords": [
+    "mcp",
+    "claude-code",
+    "ai-agents",
+    "multi-agent",
+    "hackathon",
+    "collaboration"
   ]
 }

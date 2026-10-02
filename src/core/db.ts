@@ -1,6 +1,58 @@
-import Database from 'better-sqlite3';
+// SQLite via Node's built-in node:sqlite (no native addon, so Alveare can ship as one executable).
+// `DB` wraps DatabaseSync with the few helpers the code uses: nested transactions and backups.
+import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
 
-export type DB = Database.Database;
+/** Statement typed loosely (rows are cast to row interfaces by callers), like better-sqlite3's. */
+export interface Stmt {
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+  run(...params: unknown[]): { changes: number; lastInsertRowid: number };
+}
+
+export class DB {
+  readonly raw: DatabaseSync;
+  private depth = 0;
+
+  constructor(readonly file: string) {
+    this.raw = new DatabaseSync(file);
+  }
+
+  prepare(sql: string): Stmt {
+    return this.raw.prepare(sql) as unknown as Stmt;
+  }
+
+  exec(sql: string): void {
+    this.raw.exec(sql);
+  }
+
+  /** Wrap `fn` in a transaction; nested calls become savepoints. Returns a callable like better-sqlite3. */
+  transaction<T>(fn: () => T): () => T {
+    return () => {
+      const sp = `sp${this.depth}`;
+      this.exec(this.depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${sp}`);
+      this.depth++;
+      try {
+        const out = fn();
+        this.depth--;
+        this.exec(this.depth === 0 ? 'COMMIT' : `RELEASE ${sp}`);
+        return out;
+      } catch (e) {
+        this.depth--;
+        this.exec(this.depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${sp}; RELEASE ${sp}`);
+        throw e;
+      }
+    };
+  }
+
+  /** Consistent online snapshot to `dest`. */
+  async backup(dest: string): Promise<void> {
+    await sqliteBackup(this.raw, dest);
+  }
+
+  close(): void {
+    this.raw.close();
+  }
+}
 
 // Each entry upgrades the schema by one version (tracked in PRAGMA user_version).
 const MIGRATIONS: string[] = [
@@ -104,19 +156,20 @@ const MIGRATIONS: string[] = [
 ];
 
 export function openDb(file: string): DB {
-  const db = new Database(file);
-  if (file !== ':memory:') db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  const db = new DB(file);
+  db.exec('PRAGMA busy_timeout = 3000');
+  if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA foreign_keys = ON');
   migrate(db);
   return db;
 }
 
 function migrate(db: DB): void {
-  const version = db.pragma('user_version', { simple: true }) as number;
+  const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
   for (let v = version; v < MIGRATIONS.length; v++) {
     db.transaction(() => {
       db.exec(MIGRATIONS[v]);
-      db.pragma(`user_version = ${v + 1}`);
+      db.exec(`PRAGMA user_version = ${v + 1}`);
     })();
   }
 }

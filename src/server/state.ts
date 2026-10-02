@@ -82,13 +82,13 @@ function feedItem(hive: Hive, e: EventRow): { id: number; ts: number; kind: stri
     case 'task_status': return { ...base, text: `task #${e.task_id} → ${d.status}${d.note ? ` (${d.note})` : ''}` };
     case 'task_reviewed': return { ...base, text: `review #${e.task_id}: ${d.verdict}${d.notes ? ` — ${d.notes}` : ''}` };
     case 'feature_planned': return { ...base, text: `planned "${d.description}" (${d.tasks} tasks)` };
-    case 'leader_changed': return { ...base, text: `is now leader${d.from ? ` (was ${d.from})` : ''}` };
-    case 'agent_joined': return { ...base, text: 'joined' };
+    case 'leader_changed': return { ...base, text: `is now the queen (leader)${d.from ? `, taking over from ${d.from}` : ''}` };
+    case 'agent_joined': return { ...base, text: 'joined the hive' };
     case 'claim': return { ...base, text: `claimed ${d.patterns.join(', ')}` };
     case 'release': return { ...base, text: `released ${d.patterns.join(', ')}` };
     case 'force_release': return { ...base, text: `force-released ${d.released.map((r: { pattern: string; from: string }) => `${r.pattern} (${r.from})`).join(', ')}` };
-    case 'edit': return { ...base, text: `${e.flag === 'unclaimed' ? 'edited UNCLAIMED' : 'edited'} ${e.path}` };
-    case 'subagent': return { ...base, text: `subagent ${d.name ?? d.type ?? ''} ${d.status}${d.purpose ? `: ${d.purpose}` : ''}` };
+    case 'edit': return { ...base, text: `edited ${e.path}${e.flag === 'unclaimed' ? ' without claiming it' : ''}` };
+    case 'subagent': return { ...base, text: d.status === 'running' ? `sent a drone (${d.name ?? d.type ?? 'subagent'})${d.purpose ? `: ${d.purpose}` : ''}` : `drone ${d.name ?? d.type ?? ''} ${d.status === 'done' ? 'came home' : d.status}` };
     case 'session_start': return { ...base, text: `started a Claude session (${d.source ?? 'startup'})` };
     case 'session_end': return { ...base, text: 'ended a Claude session' };
     case 'todo_done': return { ...base, text: `completed todo: ${d.title ?? ''}` };

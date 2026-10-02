@@ -1,23 +1,41 @@
-// Hive dashboard: one SSE stream delivers full state snapshots (at most ~1/s). Each section
-// re-renders only when its markup changes, preserving focus, open <details> and unsaved selects
-// so keyboard and screen-reader users keep their place. Live updates can be paused.
+// Alveare dashboard. One SSE stream delivers full state snapshots (at most ~1/s). Each section
+// re-renders only when its markup changes, preserving focus, open <details> and unsaved selects.
+// Motion: task cards glide between columns (FLIP), new feed items drop in, finished tasks get
+// "capped". Everything respects prefers-reduced-motion.
 'use strict';
 
 const $ = (id) => document.getElementById(id);
 const COLUMNS = [
   ['open', 'Open'], ['assigned', 'Assigned'], ['in_progress', 'In progress'],
-  ['blocked', 'Blocked'], ['review', 'Review'], ['done', 'Done'],
+  ['blocked', 'Blocked'], ['review', 'Review'], ['done', 'Done · capped'],
 ];
 const ANNOUNCE_KINDS = new Set(['status', 'task_reviewed', 'leader_changed', 'agent_joined']);
+const FILTERS = {
+  all: () => true,
+  messages: (f) => f.kind === 'message' || f.kind === 'status',
+  edits: (f) => f.kind === 'edit',
+  flags: (f) => !!f.flag,
+};
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+
 let state = null;
-let latest = null;      // newest snapshot, held while paused
+let latest = null;          // newest snapshot, held while paused
 let paused = false;
-let lastFeedId = null;
-let serverSkew = 0;     // server clock - local clock
+let filter = 'all';
+let lastFeedId = null;      // for announcements
+let seenFeedId = null;      // for drop-in animation
+let prevStatus = new Map(); // task id → status, for the "capped" animation
+let serverSkew = 0;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const idSafe = (s) => encodeURIComponent(String(s)).replace(/[^\w-]/g, '_');
-const icon = (ch) => `<span aria-hidden="true">${ch}</span>`;
+const initial = (n) => esc(String(n ?? '?').trim().charAt(0).toUpperCase() || '?');
+const ICON = {
+  drone: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="14" rx="5" ry="6"/><path d="M7 13H17M7.5 16.5H16.5M9 7C6 3 3 5 5 8M15 7C18 3 21 5 19 8"/></svg>',
+  crown: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="width:14px;height:14px"><path d="M3 8L7.5 12L12 5L16.5 12L21 8L19 18H5Z"/></svg>',
+  cell: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2L21 7V17L12 22L3 17V7Z"/></svg>',
+  warn: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3L22 20H2ZM12 10V14M12 17V17.5"/></svg>',
+};
 
 function dur(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -26,7 +44,23 @@ function dur(ms) {
   return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
 }
 const now = () => Date.now() + serverSkew;
-const clock = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const clock = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+
+// ───────────── theme ─────────────
+
+function storageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function storageSet(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  document.querySelector('meta[name="theme-color"]').content = t === 'light' ? '#FBF6EA' : '#14110B';
+  $('theme').setAttribute('aria-label', t === 'light' ? 'Switch to dark theme' : 'Switch to light theme');
+}
+applyTheme(storageGet('alveare-theme') ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
+$('theme').addEventListener('click', () => {
+  const t = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  applyTheme(t);
+  storageSet('alveare-theme', t);
+});
 
 // ───────────── screen-reader announcements (batched every 2 s) ─────────────
 
@@ -51,21 +85,30 @@ function render() {
   $('session').textContent = state.session;
   $('join-code').textContent = state.join_code;
   $('leader-name').textContent = state.leader.leader ?? 'none';
-  document.title = `${state.session} · Hive`;
+  document.title = `${state.session} · Alveare`;
+  const online = state.agents.filter((a) => a.online).length;
+  $('colony-count').textContent = `${state.agents.length} bee${state.agents.length === 1 ? '' : 's'} · ${online} online`;
+  const done = state.tasks.filter((t) => t.status === 'done').length;
+  $('comb-count').textContent = state.tasks.length ? `${done} of ${state.tasks.length} capped` : '';
+  const flags = state.feed.filter((f) => f.flag).length;
+  $('flag-count').textContent = flags ? `· ${flags}` : '';
+
   renderBanner();
   patch('team-list', teamHtml());
-  patch('board-cols', boardHtml());
+  flip('board-cols', () => patch('board-cols', boardHtml()));
   patch('unclaimed', unclaimedHtml());
   patch('claim-list', claimsHtml());
   patch('feed-list', feedHtml());
+  seenFeedId = state.feed[0]?.id ?? 0;
+  prevStatus = new Map(state.tasks.map((t) => [t.id, t.status]));
   announceNew();
   tick();
 }
 
 /**
- * Replace a container's markup only if it changed. Defers while a <select> inside is focused
- * (so an open picker isn't destroyed), keeps unsaved select values and open <details>, and
- * restores focus without scrolling: same id → enclosing card → section heading.
+ * Replace a container's markup only if it changed. Defers while a <select> inside is focused,
+ * keeps unsaved select values and open <details>, and restores focus without scrolling:
+ * same id → enclosing card → section heading.
  */
 function patch(id, html) {
   const el = $(id);
@@ -84,7 +127,7 @@ function patch(id, html) {
     return;
   }
   const focusId = inside ? active.id : null;
-  const holderId = inside ? active.closest('[id]:not(#' + id + ')')?.id : null;
+  const holderId = inside ? active.closest(`[id]:not(#${id})`)?.id : null;
   const dirty = [...el.querySelectorAll('select[id]')]
     .filter((s) => [...s.options].some((o) => o.selected !== o.defaultSelected))
     .map((s) => [s.id, s.value]);
@@ -101,6 +144,22 @@ function patch(id, html) {
   }
 }
 
+/** FLIP: cards keep their identity across re-renders and glide from their old position. */
+function flip(containerId, update) {
+  const box = $(containerId);
+  if (reducedMotion.matches) return update();
+  const before = new Map([...box.querySelectorAll('[data-flip]')].map((el) => [el.dataset.flip, el.getBoundingClientRect()]));
+  update();
+  for (const el of box.querySelectorAll('[data-flip]')) {
+    const old = before.get(el.dataset.flip);
+    if (!old) continue;
+    const r = el.getBoundingClientRect();
+    const dx = old.left - r.left, dy = old.top - r.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+    el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 280, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  }
+}
+
 function renderBanner() {
   const l = state.leader;
   const b = $('banner');
@@ -108,42 +167,47 @@ function renderBanner() {
   if (b.__key === key) return;
   b.__key = key;
   if (!key) { b.hidden = true; b.replaceChildren(); return; }
-  b.innerHTML = `<span><strong>Leader ${esc(l.leader)} has been offline for <span data-ago="${now() - l.offline_for_s * 1000}"></span>.</strong>
-      Suggested new leader: ${esc(l.propose)}.</span>
-    <button type="button" class="primary" id="banner-lead" data-action="set_leader" data-agent="${esc(l.propose)}">Make ${esc(l.propose)} leader</button>`;
+  b.innerHTML = `<span><strong>The queen (${esc(l.leader)}) has been offline for <span data-ago="${now() - l.offline_for_s * 1000}"></span>.</strong>
+      Suggested new queen: ${esc(l.propose)}.</span>
+    <button type="button" class="btn honey" id="banner-lead" data-action="set_leader" data-agent="${esc(l.propose)}">Crown ${esc(l.propose)}</button>`;
   b.hidden = false;
   announce(`Leader ${l.leader} is offline. Suggested new leader: ${l.propose}.`);
 }
 
 function teamHtml() {
-  if (!state.agents.length) return '<li class="empty">Nobody has joined yet.</li>';
+  if (!state.agents.length) return '<li class="empty">No bees yet. Share the join code.</li>';
   return state.agents.map((a) => {
-    const status = a.online
-      ? `<span class="badge b-online">online</span>${a.activity ? ` <span class="badge b-${a.activity}">${a.activity}</span>` : ''}`
-      : `<span class="badge b-offline">offline · seen <span data-ago="${a.last_seen}"></span> ago</span>`;
+    const queen = a.role === 'leader';
+    const status = !a.online
+      ? `<span class="status"><span class="dot"></span>Offline · seen <span data-ago="${a.last_seen}"></span> ago</span>`
+      : `<span class="status"><span class="dot ${a.activity ?? 'idle'}"></span>${a.activity === 'working' ? 'Working' : a.activity === 'idle' ? 'Idle' : 'Online'}</span>`;
     const tasks = a.tasks.length
-      ? `<ul class="plain">${a.tasks.map((t) => `<li><a class="tap" id="tl-${idSafe(a.id)}-${t.id}" href="#task-${t.id}">#${t.id} ${esc(t.title)}</a> <span class="muted small">(${t.status.replace('_', ' ')})</span></li>`).join('')}</ul>`
-      : '<span class="muted">no active task</span>';
-    const subs = a.subagents.length ? `
-      <ul class="subs" aria-label="Subagents of ${esc(a.name)}">
-        ${a.subagents.map((s) => `<li>
-          <strong>${esc(s.name)}</strong>
-          <span class="badge ${s.status === 'running' ? 'b-working' : s.status === 'failed' ? 'b-bad' : 'b-idle'}">${s.status}</span>
-          <span class="muted small" data-run-start="${s.started_at}" data-run-end="${s.ended_at ?? ''}"></span>
-          ${s.purpose ? `<span class="purpose">${esc(s.purpose)}</span>` : ''}
-        </li>`).join('')}
-      </ul>` : '';
-    return `<li class="card agent ${a.online ? '' : 'offline'}" id="agent-${idSafe(a.id)}" tabindex="-1">
-      <div class="agent-head">
-        <h3>${esc(a.name)}</h3>
-        ${a.role === 'leader' ? `<span class="badge b-leader">${icon('★')} leader</span>` : ''}
-        ${a.host ? '<span class="badge b-idle">host</span>' : ''}
-        ${status}
+      ? a.tasks.map((t) => `<a id="tl-${idSafe(a.id)}-${t.id}" href="#task-${t.id}">#${t.id} ${esc(t.title)} · ${t.status.replace('_', ' ')}</a>`).join('')
+      : `<span class="meta">${queen ? 'Leading the colony' : 'No active task'}</span>`;
+    const drones = a.subagents.length ? `<ul class="drones" aria-label="Drones (subagents) of ${esc(a.name)}">
+      ${a.subagents.map((s) => `<li class="drone ${s.status === 'running' ? '' : 'done'}">
+        <div class="drone-head">${ICON.drone}<strong>Drone · ${esc(s.name)}</strong>
+          <span class="drone-time" data-run-start="${s.started_at}" data-run-end="${s.ended_at ?? ''}"></span></div>
+        ${s.purpose ? `<div class="drone-purpose">${esc(s.purpose)}</div>` : ''}
+        <div class="stripe" aria-hidden="true"></div>
+      </li>`).join('')}
+    </ul>` : '';
+    return `<li class="bee ${queen ? 'queen-bee' : ''} ${a.online ? '' : 'away'}" id="agent-${idSafe(a.id)}" tabindex="-1">
+      <div class="bee-head">
+        <div class="hexav" aria-hidden="true">${initial(a.name)}</div>
+        <div class="bee-name">
+          <div><strong>${esc(a.name)}</strong>
+            ${queen ? `<span class="chip queen-chip">${ICON.crown} Queen</span>` : '<span class="chip">Worker</span>'}
+            ${a.host ? '<span class="chip">host</span>' : ''}</div>
+          ${status}
+        </div>
       </div>
-      <div class="small">${tasks}</div>
-      <div class="muted small">${a.claims} claim${a.claims === 1 ? '' : 's'}</div>
-      ${subs}
-      ${a.role !== 'leader' ? `<div class="agent-actions"><button type="button" id="mk-leader-${idSafe(a.id)}" data-action="set_leader" data-agent="${esc(a.name)}">Make ${esc(a.name)} leader</button></div>` : ''}
+      <div class="bee-task">${tasks}</div>
+      ${drones}
+      <div class="bee-foot">
+        <span class="meta">${a.claims} claimed cell${a.claims === 1 ? '' : 's'}</span>
+        ${queen ? '' : `<button type="button" class="btn ghost small" id="mk-leader-${idSafe(a.id)}" data-action="set_leader" data-agent="${esc(a.name)}">Crown ${esc(a.name)}</button>`}
+      </div>
     </li>`;
   }).join('');
 }
@@ -154,8 +218,8 @@ function boardHtml() {
   return COLUMNS.map(([status, label]) => {
     const tasks = state.tasks.filter((t) => t.status === status);
     return `<div class="col">
-      <h3 id="col-${status}"><span>${label}</span> <span class="muted">${tasks.length}<span class="visually-hidden"> tasks</span></span></h3>
-      ${tasks.length ? `<ul aria-labelledby="col-${status}">${tasks.map((t) => taskHtml(t, byId, names)).join('')}</ul>` : '<p class="empty">None</p>'}
+      <div class="col-head"><h3 id="col-${status}">${label}</h3><span class="count c-${status}">${tasks.length}<span class="visually-hidden"> tasks</span></span></div>
+      ${tasks.length ? `<ul aria-labelledby="col-${status}">${tasks.map((t) => taskHtml(t, byId, names)).join('')}</ul>` : '<p class="empty">Empty cells</p>'}
     </div>`;
   }).join('');
 }
@@ -165,41 +229,41 @@ function taskHtml(t, byId, names) {
     const id = parseInt(d, 10);
     const dep = byId.get(id);
     const done = dep?.status === 'done';
-    return `<a href="#task-${id}" id="dep-${t.id}-${id}" class="badge tap ${done ? 'b-ok' : 'b-warn'}">${icon(done ? '✓' : '⏳')} needs #${id}${done ? ' (done)' : ` (${dep ? dep.status.replace('_', ' ') : '?'})`}</a>`;
-  }).join(' ');
-  const opts = (sel) => `<option value="">— agent —</option>` + names.map((n) => `<option ${n === sel ? 'selected' : ''}>${esc(n)}</option>`).join('');
+    return `<a href="#task-${id}" id="dep-${t.id}-${id}" class="dep ${done ? 'ok' : 'wait'}">${done ? `#${id} done` : `waits for #${id}`}</a>`;
+  }).join('');
+  const opts = (sel) => `<option value="">Choose a bee</option>` + names.map((n) => `<option ${n === sel ? 'selected' : ''}>${esc(n)}</option>`).join('');
   const assignAction = t.status === 'open' || t.status === 'assigned' ? 'assign' : 'reassign';
   const controls = t.status === 'done' ? '' : `
     <div class="row">
       <label for="own-${t.id}">Owner</label>
       <select id="own-${t.id}">${opts(t.owner)}</select>
-      <button type="button" id="own-btn-${t.id}" data-action="${assignAction}" data-id="${t.id}" data-from="own-${t.id}">${assignAction === 'assign' ? 'Assign' : 'Reassign'}</button>
+      <button type="button" class="btn small" id="own-btn-${t.id}" data-action="${assignAction}" data-id="${t.id}" data-from="own-${t.id}">${assignAction === 'assign' ? 'Assign' : 'Reassign'}</button>
     </div>
     <div class="row">
       <label for="st-${t.id}">Status</label>
       <select id="st-${t.id}">
         ${['open', 'assigned', 'in_progress', 'blocked', 'review', 'done'].map((s) => `<option value="${s}" ${s === t.status ? 'selected' : ''}>${s.replace('_', ' ')}</option>`).join('')}
       </select>
-      <button type="button" id="st-btn-${t.id}" data-action="set_status" data-id="${t.id}" data-from="st-${t.id}">Set</button>
+      <button type="button" class="btn small" id="st-btn-${t.id}" data-action="set_status" data-id="${t.id}" data-from="st-${t.id}">Set</button>
     </div>
     ${t.status === 'review' ? `<div class="row">
-      <button type="button" class="primary" id="ap-${t.id}" data-action="review" data-verdict="approve" data-id="${t.id}">Approve</button>
-      <button type="button" id="rq-${t.id}" data-action="review" data-verdict="changes_requested" data-id="${t.id}">Request changes</button>
+      <button type="button" class="btn honey small" id="ap-${t.id}" data-action="review" data-verdict="approve" data-id="${t.id}">Approve</button>
+      <button type="button" class="btn small" id="rq-${t.id}" data-action="review" data-verdict="changes_requested" data-id="${t.id}">Request changes</button>
     </div>` : ''}`;
-  return `<li class="card task" id="task-${t.id}" tabindex="-1">
-    <div class="title">#${t.id} ${esc(t.title)}</div>
-    <div class="meta">
-      <span>${t.owner ? `${icon('👤')} ${esc(t.owner)}` : 'unowned'}</span>
-      <span>P${t.pri}</span>
-      ${t.status === 'blocked' ? '<span class="badge b-bad">blocked</span>' : ''}
+  const justCapped = t.status === 'done' && prevStatus.size && prevStatus.get(t.id) && prevStatus.get(t.id) !== 'done';
+  return `<li class="task s-${t.status} ${justCapped ? 'capped' : ''}" id="task-${t.id}" data-flip="task-${t.id}" tabindex="-1">
+    <div class="task-top"><span class="task-id">#${t.id}</span><span>P${t.pri}</span>${t.status === 'blocked' ? '<span class="chip blocked">blocked</span>' : ''}</div>
+    <div class="task-title">${esc(t.title)}</div>
+    <div class="task-meta">
+      <span class="owner"><span class="mini-av" aria-hidden="true">${t.owner ? initial(t.owner) : '·'}</span>${t.owner ? esc(t.owner) : 'unowned'}</span>
+      ${deps}
     </div>
-    ${deps ? `<div class="meta">${deps}</div>` : ''}
     <details id="det-${t.id}">
       <summary id="sum-${t.id}">Details and actions<span class="visually-hidden"> for #${t.id} ${esc(t.title)}</span></summary>
       ${t.description ? `<p class="desc">${esc(t.description)}</p>` : ''}
       ${t.acceptance ? `<p class="desc"><strong>Done when:</strong> ${esc(t.acceptance)}</p>` : ''}
       ${t.files.length ? `<ul class="files" aria-label="Expected files">${t.files.map((f) => `<li><code>${esc(f)}</code></li>`).join('')}</ul>` : ''}
-      ${t.branch ? `<div class="small">Branch <code>${esc(t.branch)}</code></div>` : ''}
+      ${t.branch ? `<div class="meta">Branch <code>${esc(t.branch)}</code></div>` : ''}
       ${t.review_notes ? `<p class="desc"><strong>Review notes:</strong> ${esc(t.review_notes)}</p>` : ''}
       ${controls}
     </details>
@@ -208,33 +272,31 @@ function taskHtml(t, byId, names) {
 
 function unclaimedHtml() {
   if (!state.unclaimed.length) return '';
-  return `<div class="alert-box">
-    <h3>${icon('⚠')} Edits to unclaimed files (last hour)</h3>
-    <ul>${state.unclaimed.map((u) => `<li><strong>${esc(u.by)}</strong> edited <code>${esc(u.path)}</code>${u.count > 1 ? ` ${u.count} times` : ''}, last at ${clock(u.ts)}</li>`).join('')}</ul>
+  return `<div class="alert">${ICON.warn}<div><strong>Edits outside claimed cells (last hour)</strong>
+    <ul>${state.unclaimed.map((u) => `<li><strong>${esc(u.by)}</strong> edited <code>${esc(u.path)}</code>${u.count > 1 ? ` ${u.count} times` : ''}, last at ${clock(u.ts)}</li>`).join('')}</ul></div>
   </div>`;
 }
 
 function claimsHtml() {
-  if (!state.claims.length) return '<p class="empty">No files are claimed.</p>';
-  return `<div class="table-wrap" tabindex="0" role="region" aria-label="File claims table"><table>
-    <caption class="visually-hidden">Active file claims</caption>
-    <thead><tr><th scope="col">Path</th><th scope="col">Held by</th><th scope="col">Task</th><th scope="col">Expires</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
-    <tbody>${state.claims.map((c) => `<tr>
-      <td><code>${esc(c.path)}</code></td>
-      <td>${esc(c.by)}</td>
-      <td>${c.task ? `<a class="tap" id="ct-${idSafe(c.by + c.path)}" href="#task-${c.task}">#${c.task}</a>` : '—'}</td>
-      <td>in <span data-until="${c.expires_at}"></span></td>
-      <td><button type="button" class="danger" id="rel-${idSafe(c.by + ':' + c.path)}" data-action="release" data-path="${esc(c.path)}" aria-label="Unlock ${esc(c.path)} held by ${esc(c.by)}">Unlock</button></td>
-    </tr>`).join('')}</tbody>
-  </table></div>`;
+  if (!state.claims.length) return '<li class="empty">No cells claimed. Every file is free.</li>';
+  return state.claims.map((c) => `<li class="cell">
+    ${ICON.cell}
+    <div class="cell-body"><code>${esc(c.path)}</code>
+      <span>${esc(c.by)} · ${c.task ? `<a href="#task-${c.task}" id="ct-${idSafe(c.by + c.path)}">#${c.task}</a>` : 'no task'} · expires in <span data-until="${c.expires_at}"></span></span></div>
+    <button type="button" class="btn danger small" id="rel-${idSafe(c.by + ':' + c.path)}" data-action="release" data-path="${esc(c.path)}" aria-label="Unlock ${esc(c.path)} held by ${esc(c.by)}">Unlock</button>
+  </li>`).join('');
 }
 
 function feedHtml() {
-  if (!state.feed.length) return '<li class="empty">Nothing yet.</li>';
-  return state.feed.map((f) => `<li class="k-${f.kind} ${f.flag ? 'flagged' : ''}">
-    <time datetime="${new Date(f.ts).toISOString()}">${clock(f.ts)}</time>
-    <span>${f.flag ? '<strong class="flag-label">Flagged:</strong> ' : ''}<span class="who">${esc(f.who ?? 'hive')}</span> <span class="text">${esc(f.text)}</span>${f.task && !/#\d/.test(f.text) ? ` <a class="tap" id="fl-${f.id}" href="#task-${f.task}">#${f.task}</a>` : ''}</span>
-  </li>`).join('');
+  const items = state.feed.filter(FILTERS[filter]);
+  if (!items.length) return `<li class="empty">${filter === 'all' ? 'The hive is quiet.' : 'Nothing here yet.'}</li>`;
+  return items.map((f) => {
+    const fresh = seenFeedId !== null && f.id > seenFeedId;
+    return `<li class="k-${f.kind} ${f.flag ? 'flagged' : ''} ${fresh ? 'enter' : ''}">
+      <time datetime="${new Date(f.ts).toISOString()}">${clock(f.ts)}</time>
+      <span>${f.flag ? '<span class="flag-label">Flagged:</span> ' : ''}<strong>${esc(f.who ?? 'hive')}</strong> <span class="text">${esc(f.text)}</span>${f.task && !/#\d/.test(f.text) ? ` <a id="fl-${f.id}" href="#task-${f.task}">#${f.task}</a>` : ''}</span>
+    </li>`;
+  }).join('');
 }
 
 /** Announce only important new events to screen readers (not every edit). */
@@ -254,7 +316,7 @@ function tick() {
   for (const el of document.querySelectorAll('[data-until]')) el.textContent = dur(Number(el.dataset.until) - n);
   for (const el of document.querySelectorAll('[data-run-start]')) {
     const end = el.dataset.runEnd ? Number(el.dataset.runEnd) : n;
-    el.textContent = `${el.dataset.runEnd ? 'ran' : 'running'} ${dur(end - Number(el.dataset.runStart))}`;
+    el.textContent = `${el.dataset.runEnd ? 'ran ' : ''}${dur(end - Number(el.dataset.runStart))}`;
   }
 }
 setInterval(tick, 1000);
@@ -275,10 +337,10 @@ $('toast-close').addEventListener('click', hideToast);
 async function act(body, success) {
   hideToast();
   const res = await fetch('/api/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
-  if (!res) return toast("Can't reach the Hive host. Check the connection.");
+  if (!res) return toast("Can't reach the hive host. Check the connection.");
   if (res.status === 401) return showLogin();
   const r = await res.json().catch(() => ({}));
-  if (!r.ok) toast(`${r.message ?? r.error ?? 'Action failed'}${r.do ? ` — ${r.do}` : ''}`);
+  if (!r.ok) toast(`${r.message ?? r.error ?? 'Action failed'}${r.do ? `. ${r.do}` : ''}`);
   else if (success) announce(success);
   return r;
 }
@@ -292,7 +354,7 @@ document.addEventListener('click', async (e) => {
     case 'assign':
     case 'reassign': {
       const agent = $(d.from).value;
-      if (!agent) return toast('Pick an agent first.');
+      if (!agent) return toast('Choose a bee first.');
       return act({ action: d.action, id, agent }, `Task ${id} ${d.action}ed to ${agent}`);
     }
     case 'set_status': {
@@ -307,25 +369,63 @@ document.addEventListener('click', async (e) => {
       return act({ action: 'review', id, verdict: d.verdict, notes }, `Task ${id} ${d.verdict === 'approve' ? 'approved' : 'sent back'}`);
     }
     case 'release':
-      if (!confirm(`Unlock ${d.path}? The holder will be notified.`)) return;
+      if (!confirm(`Unlock ${d.path}? The bee holding it will be told.`)) return;
       return act({ action: 'release', path: d.path }, `Unlocked ${d.path}`);
     case 'set_leader':
-      if (!confirm(`Make ${d.agent} the leader?`)) return;
-      return act({ action: 'set_leader', agent: d.agent }, `${d.agent} is now leader`);
+      if (!confirm(`Make ${d.agent} the queen (leader)?`)) return;
+      return act({ action: 'set_leader', agent: d.agent }, `${d.agent} is now the queen`);
   }
 });
 
-$('rotate').addEventListener('click', async () => {
-  if (!confirm('Generate a new join code? The old one stops working for new joins (connected agents are unaffected).')) return;
+$('rotate').addEventListener('click', () => {
+  if (!confirm('Generate a new join code? The old one stops working for new joins. Bees already inside stay connected.')) return;
   act({ action: 'rotate_code' }, 'New join code generated');
+});
+
+$('copy-code').addEventListener('click', async () => {
+  const code = $('join-code').textContent;
+  try {
+    await navigator.clipboard.writeText(code);
+    $('copy-code').textContent = 'Copied';
+    announce('Join code copied');
+  } catch {
+    $('copy-code').textContent = code; // insecure context (plain http on LAN): show it big instead
+  }
+  setTimeout(() => { $('copy-code').textContent = 'Copy'; }, 1800);
 });
 
 $('pause').addEventListener('click', () => {
   paused = !paused;
   $('pause').setAttribute('aria-pressed', String(paused));
-  $('pause').textContent = paused ? 'Resume live updates' : 'Pause live updates';
-  if (!paused && latest) { state = latest; render(); }
+  $('pause').textContent = paused ? 'Resume' : 'Pause';
+  if (!paused && latest) { state = latest; render(); setConn('live', 'live'); }
   announce(paused ? 'Live updates paused' : 'Live updates resumed');
+});
+
+for (const b of document.querySelectorAll('.segmented button')) {
+  b.addEventListener('click', () => {
+    filter = b.dataset.filter;
+    for (const x of document.querySelectorAll('.segmented button')) x.setAttribute('aria-pressed', String(x === b));
+    if (state) patch('feed-list', feedHtml());
+  });
+}
+
+for (const b of document.querySelectorAll('.tabbar button')) {
+  b.addEventListener('click', () => {
+    document.body.dataset.view = b.dataset.view;
+    for (const x of document.querySelectorAll('.tabbar button')) {
+      if (x === b) x.setAttribute('aria-current', 'page'); else x.removeAttribute('aria-current');
+    }
+    window.scrollTo({ top: 0 });
+    $(`${b.dataset.view}-h`)?.focus({ preventScroll: true });
+  });
+}
+
+// Jumping to a task from anywhere (e.g. the colony on a phone) switches to the comb tab.
+addEventListener('hashchange', () => {
+  if (location.hash.startsWith('#task-') && innerWidth < 900) document.querySelector('.tabbar button[data-view="comb"]').click();
+  const el = document.querySelector(location.hash);
+  if (el) { el.scrollIntoView({ block: 'center' }); el.focus({ preventScroll: true }); }
 });
 
 // ───────────── connection ─────────────
@@ -343,18 +443,18 @@ function connect() {
   source = new EventSource('/api/stream');
   source.onopen = () => {
     if ($('conn').classList.contains('down')) announce('Reconnected');
-    setConn('live', 'live');
+    setConn(paused ? 'Paused' : 'Live · humming', paused ? 'paused' : 'live');
   };
   source.onmessage = (ev) => {
     latest = JSON.parse(ev.data);
     serverSkew = latest.now - Date.now();
-    if (paused) { setConn('paused', 'paused'); return; }
+    if (paused) { setConn('Paused', 'paused'); return; }
     state = latest;
     render();
   };
   source.onerror = async () => {
     if (!$('conn').classList.contains('down')) announce('Connection lost, reconnecting');
-    setConn('reconnecting…', 'down');
+    setConn('Reconnecting…', 'down');
     const r = await fetch('/api/state').catch(() => null);
     if (r?.status === 401) { source.close(); showLogin(); }
   };
@@ -379,7 +479,7 @@ function loginError(msg) {
 $('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const res = await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: $('code').value }) }).catch(() => null);
-  if (!res) return loginError("Can't reach the Hive host. Check your connection and try again.");
+  if (!res) return loginError("Can't reach the hive host. Check your connection and try again.");
   if (!res.ok) return loginError(res.status === 429 ? 'Too many tries. Wait one minute.' : 'That join code is not valid. Check the host terminal.');
   $('code').removeAttribute('aria-invalid');
   $('login-error').textContent = '';
