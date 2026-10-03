@@ -16,3 +16,5 @@ export function repoRoot(cwd?: string): string | null;
 export function defaultName(): string;
 export function normalizeAddress(a: string): string;
 export function detectClients(): string[];
+export const CLIENT_ALIASES: Record<string, string>;
+export function resolveClient(id: string): string;

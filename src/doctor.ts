@@ -36,7 +36,7 @@ function clientConfigured(id: string, root: string, mcpUrl: string): boolean | n
   switch (id) {
     case 'cursor': return has(join(root, '.cursor', 'mcp.json'));
     case 'vscode': return has(join(root, '.vscode', 'mcp.json'));
-    case 'gemini': return has(join(root, '.gemini', 'settings.json'));
+    case 'agy': return has(join(homedir(), '.gemini', 'config', 'mcp_config.json'));
     case 'opencode': return has(join(root, 'opencode.json'));
     case 'codex': return has(join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'config.toml'));
     case 'claude': {
@@ -83,7 +83,7 @@ export async function doctor(): Promise<void> {
     }
 
     console.log('\nAI tools');
-    for (const id of cfg.clients ?? []) {
+    for (const id of (cfg.clients ?? []).map(joinLib.resolveClient)) {
       const label = joinLib.CLIENTS[id]?.label ?? id;
       const ok = clientConfigured(id, cfg.repo_root, cfg.mcp_url);
       if (ok === true) say('ok', `${label} is configured for this hive`);

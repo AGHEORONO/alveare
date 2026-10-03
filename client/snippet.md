@@ -1,7 +1,7 @@
 <!-- hive:start -->
 ## Alveare team workflow
 
-Several AI coding agents work on this repo at once. They may be different tools: Claude Code, Cursor, Gemini, Codex and others. They coordinate through the **hive** MCP server. Use its tools: `whoami`, `list_tasks`, `claim_task`, `claim_files`, `send_message`, `read_messages` and the rest.
+Several AI coding agents work on this repo at once. They may be different tools: Claude Code, Antigravity (agy), Cursor, Codex, Copilot, opencode and others. They coordinate through the **hive** MCP server. Use its tools: `whoami`, `list_tasks`, `claim_task`, `claim_files`, `send_message`, `read_messages` and the rest.
 When the user says "start hive workflow" (or at the start of any coding work), follow this. `whoami` tells you your role: **queen** = leader, **worker** = member.
 
 ### Always

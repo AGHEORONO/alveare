@@ -10,13 +10,13 @@ Alveare lets a small team vibe code together on one git repo, each person with t
 
 You and your friends watch the whole colony live from a dashboard on any laptop or phone.
 
-It works with **any AI tool that supports MCP**, not just Claude: Claude Code, Cursor, Gemini CLI, Codex CLI, VS Code Copilot, and anything else that speaks MCP.
+It works with **any AI tool that supports MCP**, not just Claude: Claude Code, Antigravity CLI (`agy`), Cursor, Codex CLI, VS Code Copilot, opencode, and anything else that speaks MCP.
 It runs entirely on your local network. There is no cloud and no accounts, so it works at hackathons with bad or no internet.
 
 ```
  laptop A (host)                      laptops B, C, D (any AI tool)
  ┌──────────────────────┐             ┌──────────────────────────┐
- │ alveare host          │◄── MCP ─────│ Claude / Cursor / Gemini │  tasks, claims, messages
+ │ alveare host          │◄── MCP ─────│ Claude / agy / Cursor …  │  tasks, claims, messages
  │  • MCP  /mcp          │◄── hooks ───│ (Claude Code only)       │  live edits & subagents
  │  • dashboard  /       │◄── SSE ─────│ browser / phone          │  watch + override
  │  • one SQLite file    │             └──────────────────────────┘
@@ -81,22 +81,22 @@ curl -fsSL http://192.168.1.20:4747/install.sh | sh -s -- 192.168.1.20:4747 K7QW
 
 ## Supported AI tools
 
-Choose one or more with `--client`, e.g. `alveare join --client cursor,gemini`, or pick from the list `join` shows you.
+Choose one or more with `--client`, e.g. `alveare join --client cursor,agy`, or pick from the list `join` shows you.
 
 | `--client` | Tool | MCP config `join` writes | Instructions it reads | Live edit tracking |
 |---|---|---|---|---|
 | `claude` | Claude Code | `claude mcp add` (local scope) | `CLAUDE.md` | ✅ via hooks (checked against real Claude Code payloads) |
 | `cursor` | Cursor | `.cursor/mcp.json` | `AGENTS.md`, `.cursor/rules/alveare.mdc` | — |
 | `vscode` | VS Code + GitHub Copilot (agent mode) | `.vscode/mcp.json` | `AGENTS.md`, `.github/copilot-instructions.md` | — |
-| `gemini` | Gemini CLI | `.gemini/settings.json` | `GEMINI.md` | — |
+| `agy` | Antigravity CLI (replaces Gemini CLI; `--client gemini` still works) | `agy mcp add` (per user) | `AGENTS.md`, `GEMINI.md` | — |
 | `codex` | OpenAI Codex CLI | `~/.codex/config.toml` | `AGENTS.md` | — |
 | `opencode` | opencode (works with free models) | `opencode.json` | `AGENTS.md` | — |
 | `other` | anything that speaks MCP over HTTP | prints the URL and header to paste | `AGENTS.md` | — |
 
 - **Tokens stay off GitHub.** Every config file that holds your personal token is added to `.git/info/exclude`, so it never gets committed. The instruction files (`AGENTS.md` and friends) contain no secrets and are meant to be shared.
-- **Friends without Claude** can use a tool with a free tier: Gemini CLI, Copilot in VS Code, Cursor, or opencode with its free models. They join the same hive as everyone else.
-- **Tested for real:** an opencode agent on a free model, acting as queen, planned a task. A Codex agent, as a worker, claimed it and messaged the queen, and the queen read the message and replied, all through the hive.
-- **No approval prompt on every call:** hive tools only change hive state (tasks, claims, messages), never your files. So `join` pre-approves them for Codex (`default_tools_approval_mode`) and Gemini (`trust`), and marks the read-only ones with standard MCP hints.
+- **Friends without Claude** can use a tool with a free tier: the Antigravity CLI, Copilot in VS Code, Cursor, or opencode with its free models. They join the same hive as everyone else.
+- **Tested for real:** an Antigravity (`agy`) agent was told only "start hive workflow" and a goal. On its own it took the queen role, planned two tasks, claimed them, made the branches, committed, sent them to review and approved them. Separately, an opencode agent on a free model, acting as queen, planned a task. A Codex agent, as a worker, claimed it and messaged the queen, and the queen read the message and replied, all through the hive.
+- **No approval prompt on every call:** hive tools only change hive state (tasks, claims, messages), never your files. So `join` pre-approves them for Codex (`default_tools_approval_mode`) and marks the read-only ones with standard MCP hints. Other tools may still ask you to approve hive calls.
 - **What works for every tool:**
   - tasks, file claims, messages and leader rules (all enforced by the server)
   - the queen role
@@ -175,7 +175,8 @@ Tasks, claims, messages, the queen and the join code all carry over, and **exist
 4. **Laptop 2:** run `alveare join`. If discovery finds nothing, run `alveare join <host-ip>:4747 --code <code>`.
 5. **Laptop 2:** restart the AI tool. Then:
    - **Claude Code:** `claude mcp list` should show `hive … ✔ Connected`.
-   - **Gemini CLI / Codex:** `/mcp` should list `hive`.
+   - **agy:** `agy mcp list` should show `hive … enabled`.
+   - **Codex:** `/mcp` should list `hive`.
    - **Cursor / VS Code:** enable `hive` in the MCP settings or view.
 6. Ask the agent to run `whoami`. Expected role: `member` (a worker).
 7. **Dashboard** (on a phone too): the bee shows online. With Claude Code, an edit to an unclaimed file shows up flagged in the waggle feed.

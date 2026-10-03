@@ -176,18 +176,19 @@ export const CLIENTS = {
       return 'VS Code: .vscode/mcp.json (start "hive" in the MCP view, then use Agent mode)';
     },
   },
-  gemini: {
-    label: 'Gemini CLI',
-    detect: () => hasCommand('gemini'),
-    instructions: ['GEMINI.md', 'AGENTS.md'],
+  agy: {
+    label: 'Antigravity CLI (agy)',
+    detect: () => hasCommand('agy'),
+    instructions: ['AGENTS.md', 'GEMINI.md'],
     register(root, url, token) {
-      const file = pjoin(root, '.gemini', 'settings.json');
-      const cfg = readJsonFile(file, {});
-      // trust: hive tools only change hive state (tasks, claims, messages), never files, so skip per-call prompts.
-      (cfg.mcpServers ??= {})[MCP_NAME] = { httpUrl: url, headers: { Authorization: `Bearer ${token}` }, trust: true };
-      writeJsonFile(file, cfg);
-      excludeFromGit(root, ['.gemini/settings.json']);
-      return 'Gemini CLI: .gemini/settings.json (check with /mcp)';
+      // agy keeps MCP servers per user (~/.gemini/config/mcp_config.json); `mcp add` updates in place.
+      const r = run('agy', ['mcp', 'add', '--header', `Authorization: Bearer ${token}`, MCP_NAME, url], root);
+      if (r.error || r.status !== 0) {
+        log('  ! could not run `agy mcp add`. Run this yourself:');
+        log(`    agy mcp add --header "Authorization: Bearer ${token}" ${MCP_NAME} ${url}`);
+        return false;
+      }
+      return 'Antigravity CLI: registered with agy (check with: agy mcp list)';
     },
   },
   codex: {
@@ -232,12 +233,16 @@ export const CLIENTS = {
   },
 };
 
+/** Old names that now map to another client (Gemini CLI was replaced by the Antigravity CLI). */
+export const CLIENT_ALIASES = { gemini: 'agy', antigravity: 'agy' };
+export const resolveClient = (id) => CLIENT_ALIASES[id] ?? id;
+
 export function detectClients() {
   return Object.entries(CLIENTS).filter(([, c]) => c.detect()).map(([id]) => id);
 }
 
 function writeInstructions(root, clientIds, snippet) {
-  const files = new Set(clientIds.flatMap((id) => CLIENTS[id]?.instructions ?? []));
+  const files = new Set(clientIds.map(resolveClient).flatMap((id) => CLIENTS[id]?.instructions ?? []));
   for (const rel of files) {
     const prefix = rel.endsWith('.mdc') ? '---\ndescription: Alveare team workflow (multi-agent coordination)\nalwaysApply: true\n---\n\n' : '';
     upsertSection(pjoin(root, rel), snippet, prefix);
@@ -273,7 +278,7 @@ function writeHiveDir(root, cfg, hookSource) {
 }
 
 function connectClients(root, cfg, clientIds, hook) {
-  for (const id of clientIds) {
+  for (const id of clientIds.map(resolveClient)) {
     const c = CLIENTS[id];
     if (!c) { log(`  ! unknown client "${id}" (known: ${Object.keys(CLIENTS).join(', ')})`); continue; }
     const msg = c.register(root, cfg.mcp_url, cfg.token);
@@ -296,7 +301,7 @@ export async function join(opts) {
   const root = gitRoot ?? resolve(opts.cwd ?? process.cwd());
   if (!gitRoot) log(`  ! ${root} is not a git repo; installing there anyway`);
   const name = opts.name ?? defaultName();
-  const clients = opts.clients?.length ? opts.clients : [detectClients()[0] ?? 'other'];
+  const clients = (opts.clients?.length ? opts.clients : [detectClients()[0] ?? 'other']).map(resolveClient);
 
   log(`→ joining ${server} as "${name}" with ${clients.map((c) => CLIENTS[c]?.label ?? c).join(', ')}`);
   const r = await getJson(`${server}/api/join`, {
