@@ -23,8 +23,9 @@ When the user says "start hive workflow" (or at the start of any coding work), f
    - reassign blocked work, or the work of agents that went offline (`list_agents`). Results include `"stale_tasks"` when a worker has gone silent while holding a task.
    - resolve claim conflicts, using `force_release` only if the holder is gone
    - `post_status` every few completed tasks
-3. Humans merge approved branches. Do not merge yourself.
-4. You may also take tasks yourself when the team is small.
+3. If `whoami` shows `independent_queen: false`, you may not approve your own tasks. Ask an online worker (or a human on the dashboard) to `review_task` them.
+4. Humans merge approved branches. Do not merge yourself.
+5. You may also take tasks yourself when the team is small.
 
 ### If you are a worker (member)
 1. Work on tasks assigned to you first. Otherwise `list_tasks(ready:true)` and pick one.
@@ -36,5 +37,6 @@ When the user says "start hive workflow" (or at the start of any coding work), f
    - `update_task(id, "review", note)`, which releases the task's claims
    - `release_files` any extra claims
 5. If stuck: `update_task(id, "blocked", note)` and `send_message("leader", ...)`.
-6. If `review_task` sends changes back, you'll get a message. The task returns to in_progress with its files re-claimed.
+6. If the queen asks you to review one of her tasks (independent queen off), use `get_task`, look at the branch, then `review_task` with a verdict and notes.
+7. If `review_task` sends changes back, you'll get a message. The task returns to in_progress with its files re-claimed.
 <!-- hive:end -->

@@ -423,7 +423,10 @@ export class Hive {
           if (t.status !== 'in_progress') throw bad();
           this.setTask(id, { status: 'review' });
           this.releaseTaskClaims(id);
-          if (this.leaderId()) {
+          if (t.owner_id && t.owner_id === this.leaderId() && !this.independentQueen()) {
+            // The queen can't review her own work: ask the other bees instead of messaging herself.
+            this.insertMessage(actor, 'all', null, `The queen's task #${id} "${t.title}" needs a reviewer (branch ${t.branch}). Any bee may review_task ${id}.${note ? ` Note: ${note}` : ''}`, id);
+          } else if (this.leaderId()) {
             this.insertMessage(actor, 'leader', null, `Task #${id} "${t.title}" is ready for review (branch ${t.branch})${note ? `: ${note}` : ''}`, id);
           }
           break;
@@ -453,8 +456,34 @@ export class Hive {
     });
   }
 
+  /** Independent queen (default on): the queen may approve her own tasks. Off: someone else must. */
+  independentQueen(): boolean {
+    return this.getMeta('independent_queen') !== '0';
+  }
+
+  setIndependentQueen(on: boolean): boolean {
+    this.setMeta('independent_queen', on ? '1' : '0');
+    this.event('setting', { data: { independent_queen: on } });
+    this.onChange('settings');
+    return on;
+  }
+
+  /**
+   * Who may review: the queen (or a human) normally. With independent queen off, the queen may not
+   * approve her own tasks; any other bee may review those instead.
+   */
   reviewTask(actor: Actor, id: number, verdict: 'approve' | 'changes_requested', notes?: string): { task: TaskRow; warnings: string[] } {
-    this.requireLeader(actor, 'review_task');
+    const pre = this.task(id);
+    const queenId = this.leaderId();
+    const queensTask = pre.owner_id !== null && pre.owner_id === queenId;
+    const peerReview = queensTask && !this.independentQueen() && actor !== null && actor !== queenId;
+    if (!peerReview) this.requireLeader(actor, 'review_task');
+    if (queensTask && !this.independentQueen() && actor === queenId) {
+      const others = this.agents().filter((a) => a.id !== queenId && this.isOnline(a)).map((a) => a.name);
+      throw new HiveError('forbidden', `independent queen is off: the queen can't review her own task #${id}`,
+        { reviewers: others },
+        others.length ? `send_message to ${others[0]} asking them to review_task ${id}` : 'ask a human to review it on the dashboard, or turn Independent queen on');
+    }
     return this.tx(() => {
       const t = this.task(id);
       if (t.status !== 'review') throw new HiveError('bad_state', `task ${id} is ${t.status}, not review`, { status: t.status });

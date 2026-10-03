@@ -97,6 +97,13 @@ select, input { font: inherit; color: var(--text); background: var(--sunken); bo
 .queen { display: flex; align-items: center; gap: 8px; }
 .crown { stroke: var(--honey-text); }
 .queen .plain { font-size: 12px; }
+.switch { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; margin-left: 6px; padding: 0 10px 0 6px; border-radius: 999px;
+  border: 1px solid var(--control); background: transparent; color: var(--text-2); font: 500 13px var(--sans); cursor: pointer; }
+.switch .track { width: 34px; height: 20px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--control); position: relative; transition: background-color .2s ease; }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--muted); transition: transform .2s ease, background-color .2s ease; }
+.switch[aria-checked="true"] .track { background: var(--honey); border-color: var(--honey); }
+.switch[aria-checked="true"] .knob { transform: translateX(14px); background: var(--honey-ink); }
+@media (forced-colors: active) { .switch[aria-checked="true"] .knob { background: Highlight; } }
 .top-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 .conn { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; margin-right: 4px; }
 .conn::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--faint); }

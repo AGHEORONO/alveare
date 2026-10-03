@@ -85,6 +85,7 @@ function render() {
   $('session').textContent = state.session;
   $('join-code').textContent = state.join_code;
   $('leader-name').textContent = state.leader.leader ?? 'none';
+  $('indep').setAttribute('aria-checked', String(state.independent_queen !== false));
   document.title = `${state.session} · Alveare`;
   const online = state.agents.filter((a) => a.online).length;
   $('colony-count').textContent = `${state.agents.length} bee${state.agents.length === 1 ? '' : 's'} · ${online} online`;
@@ -403,6 +404,13 @@ document.addEventListener('click', async (e) => {
       if (!confirm(`Make ${d.agent} the queen (leader)?`)) return;
       return act({ action: 'set_leader', agent: d.agent }, `${d.agent} is now the queen`);
   }
+});
+
+$('indep').addEventListener('click', () => {
+  const on = $('indep').getAttribute('aria-checked') !== 'true';
+  $('indep').setAttribute('aria-checked', String(on)); // optimistic; the next snapshot confirms
+  act({ action: 'independent_queen', on }, on ? 'Independent queen on: the queen may approve her own tasks'
+    : "Independent queen off: the queen's tasks need another reviewer");
 });
 
 $('rotate').addEventListener('click', () => {

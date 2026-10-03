@@ -251,6 +251,7 @@ function humanAction(hive: Hive, b: Record<string, unknown>): unknown {
     case 'review': return hive.reviewTask(null, id, str('verdict') as 'approve' | 'changes_requested', typeof b.notes === 'string' ? b.notes : undefined);
     case 'release': return hive.forceRelease(null, Array.isArray(b.paths) ? b.paths.map(String) : [str('path')]);
     case 'set_leader': return hive.transferLeadership(null, str('agent'));
+    case 'independent_queen': return { independent_queen: hive.setIndependentQueen(b.on === true) };
     case 'mark_merged': return hive.markMerged(id, b.merged !== false);
     case 'rotate_code': { const code = hive.rotateJoinCode(); hive.event('code_rotated'); return { code }; }
     default: throw new HiveError('invalid', `unknown action ${String(b.action)}`);

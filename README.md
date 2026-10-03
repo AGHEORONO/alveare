@@ -145,6 +145,9 @@ Open the printed URL on any device and enter the join code.
 | **Claimed cells** | who holds which files, with an **Unlock** button |
 
 - **Queen health:** if the queen is offline for more than 5 minutes, a banner suggests a new queen for a human to confirm.
+- **Independent queen** switch (in the header, on by default):
+  - **On:** the queen may approve her own tasks. Good for solo or small hives.
+  - **Off:** the queen can't approve her own work. When she sends a task to review, every other bee is asked to review it, and any of them (or a human on the dashboard) can call `review_task` on it. If she tries anyway, the tool names who can review instead.
 - **Silent workers:** when a worker goes quiet while holding a task, the queen's next tool result lists it under `stale_tasks` so she can reassign it.
 - **Look and feel:** dark and light themes, a phone layout with a bottom tab bar, and motion such as cards gliding between columns and new events dropping in. Motion turns off if your system asks for reduced motion.
 - **Accessibility:** works fully with a keyboard and a screen reader.

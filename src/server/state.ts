@@ -56,6 +56,7 @@ export function snapshot(hive: Hive, hooks: HookIngest) {
     session: hive.getMeta('session_name') ?? 'Hive',
     join_code: hive.joinCode(),
     leader: hive.leaderStatus(),
+    independent_queen: hive.independentQueen(),
     claim_ttl_ms: hive.claimTtlMs,
     agents,
     tasks,
@@ -96,6 +97,7 @@ function feedItem(hive: Hive, e: EventRow): { id: number; ts: number; kind: stri
     case 'session_end': return { ...base, text: 'ended a Claude session' };
     case 'todo_done': return { ...base, text: `completed todo: ${d.title ?? ''}` };
     case 'code_rotated': return { ...base, text: 'rotated the join code' };
+    case 'setting': return { ...base, text: d.independent_queen ? 'turned Independent queen on: the queen may approve her own tasks' : "turned Independent queen off: the queen's tasks need another reviewer" };
     case 'task_merged': return { ...base, text: d.merged ? `merged ${d.branch} (task #${e.task_id})` : `un-marked ${d.branch} as merged` };
     default: return { ...base, text: e.kind };
   }

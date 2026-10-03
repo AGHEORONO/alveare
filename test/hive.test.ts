@@ -345,3 +345,51 @@ describe('stale work and merge queue', () => {
     assert.equal(hive.mergeQueue().length, 1, 'can be undone');
   });
 });
+
+describe('independent queen toggle', () => {
+  function queensTaskInReview() {
+    const ctx = setup();
+    const t = ctx.hive.createTask(ctx.ana, { title: 'Queen work' });
+    ctx.hive.claimTask(ctx.ana, t.id);
+    ctx.hive.updateTask(ctx.ana, t.id, 'review');
+    return { ...ctx, id: t.id };
+  }
+
+  test('on (default): the queen approves her own task; workers still cannot review', () => {
+    const { hive, ana, ben, id } = queensTaskInReview();
+    assert.equal(hive.independentQueen(), true);
+    throwsCode(() => hive.reviewTask(ben, id, 'approve'), 'leader_only');
+    assert.equal(hive.reviewTask(ana, id, 'approve').task.status, 'done');
+  });
+
+  test('off: the queen is told who can review; another bee or a human reviews instead', () => {
+    const { hive, ana, ben, id } = queensTaskInReview();
+    hive.setIndependentQueen(false);
+    const e = throwsCode(() => hive.reviewTask(ana, id, 'approve'), 'forbidden');
+    assert.ok((e.details.reviewers as string[]).includes('ben'));
+    assert.match(e.hint!, /review_task/);
+    assert.equal(hive.reviewTask(ben, id, 'changes_requested', 'add tests').task.status, 'in_progress');
+    hive.updateTask(ana, id, 'review');
+    assert.equal(hive.reviewTask(null, id, 'approve').task.status, 'done', 'humans can always review');
+  });
+
+  test('off: sending the queen\'s task to review asks the other bees, not the queen herself', () => {
+    const { hive, ana, ben } = setup();
+    hive.setIndependentQueen(false);
+    const t = hive.createTask(ana, { title: 'Q' });
+    hive.claimTask(ana, t.id);
+    hive.updateTask(ana, t.id, 'review');
+    assert.ok(hive.readMessages(ben).some((m) => /needs a reviewer/.test(m.body)));
+    assert.ok(!hive.readMessages(ana).some((m) => /ready for review/.test(m.body)));
+  });
+
+  test('off: workers still cannot review other workers\' tasks', () => {
+    const { hive, ana, ben, cat } = setup();
+    hive.setIndependentQueen(false);
+    const t = hive.createTask(ana, { title: 'Worker work' });
+    hive.claimTask(cat, t.id);
+    hive.updateTask(cat, t.id, 'review');
+    throwsCode(() => hive.reviewTask(ben, t.id, 'approve'), 'leader_only');
+    assert.equal(hive.reviewTask(ana, t.id, 'approve').task.status, 'done');
+  });
+});

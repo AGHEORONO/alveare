@@ -68,6 +68,7 @@ export function buildMcpServer(hive: Hive, agentId: string): McpServer {
       name: a.name,
       role: hive.isLeader(me) ? 'leader' : 'member',
       leader: nameOf(hive, hive.leaderId()),
+      independent_queen: hive.independentQueen(),
       tasks: mine.map((t) => taskBrief(hive, t)),
       claims: hive.claimsOf(me).map((c) => c.pattern),
       unread: hive.unreadCount(me),
@@ -206,7 +207,7 @@ export function buildMcpServer(hive: Hive, agentId: string): McpServer {
   }, ({ id, agent, note }) => run(() => hive.reassignTask(me, id, agent, note)));
 
   tool('review_task', {
-    description: '[leader] Approve (done; humans merge) or request changes (back to in_progress) for a task in review.',
+    description: '[leader] Approve (done; humans merge) or request changes (back to in_progress) for a task in review. When independent_queen is false, the queen cannot review her own tasks and any other bee reviews them instead.',
     inputSchema: { id: z.number().int(), verdict: z.enum(['approve', 'changes_requested']), notes: z.string().optional() },
   }, ({ id, verdict, notes }) => run(() => {
     const r = hive.reviewTask(me, id, verdict, notes);
