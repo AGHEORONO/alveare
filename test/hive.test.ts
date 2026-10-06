@@ -218,6 +218,24 @@ describe('tasks', () => {
     throwsCode(() => hive.reviewTask(ana, t.id, 'approve'), 'bad_state');
   });
 
+  test('deps_unmet explains each dependency; claiming your own blocked task resumes it', () => {
+    const { hive, ana, ben, cat } = setup();
+    const a = hive.createTask(ana, { title: 'API' });
+    const b = hive.createTask(ana, { title: 'UI', depends_on: [a.id] });
+    hive.assignTask(ana, b.id, 'cat');
+    hive.claimTask(ben, a.id);
+    let e = throwsCode(() => hive.claimTask(cat, b.id), 'deps_unmet');
+    assert.match(e.hint!, /being built by ben/);
+    hive.updateTask(ben, a.id, 'review');
+    e = throwsCode(() => hive.claimTask(cat, b.id), 'deps_unmet');
+    assert.match(e.hint!, new RegExp(`waiting for the queen's review.*origin/task/${a.id}-api`));
+    assert.deepEqual((e.details.deps as { status: string }[]).map((d) => d.status), ['review']);
+    hive.updateTask(cat, b.id, 'blocked', 'waiting on API');
+    hive.reviewTask(ana, a.id, 'approve');
+    assert.equal(hive.claimTask(cat, b.id).task.status, 'in_progress', 'one call resumes the blocked task');
+    assert.equal(hive.task(b.id).blocked_from, null);
+  });
+
   test('blocked requires a note and unblocks to the previous status', () => {
     const { hive, ana, ben } = setup();
     const t = hive.createTask(ana, { title: 'T' });

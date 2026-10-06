@@ -385,15 +385,25 @@ export class Hive {
         throw new HiveError('forbidden', `task ${id} is assigned to ${this.agent(t.owner_id!).name}`, {},
           this.hintForReadyTasks(agentId));
       }
-      if (t.status !== 'open' && t.status !== 'assigned') {
+      // Your own blocked task: claiming it again resumes it once its dependencies are done.
+      const resumable = t.status === 'blocked' && t.owner_id === agentId;
+      if (t.status !== 'open' && t.status !== 'assigned' && !resumable) {
         const owner = t.owner_id ? this.agent(t.owner_id).name : null;
         throw new HiveError('bad_state', `task ${id} is ${t.status}${owner ? ` (owner ${owner})` : ''}`, { status: t.status },
           this.hintForReadyTasks(agentId));
       }
       const unmet = this.unmetDeps(id);
       if (unmet.length) {
-        throw new HiveError('deps_unmet', `task ${id} waits on tasks ${unmet.join(', ')}`, { waiting_on: unmet },
-          this.hintForReadyTasks(agentId));
+        const deps = unmet.map((d) => this.task(d)).map((d) => ({
+          id: d.id, status: d.status, owner: d.owner_id ? this.agent(d.owner_id).name : null, branch: d.branch,
+        }));
+        const advice = deps.map((d) => d.status === 'review'
+          ? `#${d.id} is built and waiting for the queen's review: message "leader", or start now from its branch (git checkout -b <your branch> origin/${d.branch})`
+          : d.status === 'in_progress'
+            ? `#${d.id} is being built by ${d.owner}: message them for the interfaces you need`
+            : `#${d.id} hasn't started yet (${d.status})`);
+        throw new HiveError('deps_unmet', `task ${id} waits on tasks ${unmet.join(', ')}`, { waiting_on: unmet, deps },
+          `${advice.join('; ')}. Meanwhile: ${this.hintForReadyTasks(agentId)}`);
       }
       const files = this.taskFiles(id);
       const conflicts = this.findConflicts(agentId, files);
@@ -402,7 +412,7 @@ export class Hive {
           `message ${[...new Set(conflicts.map((c) => c.by))].join('/')} or leader; ${this.hintForReadyTasks(agentId)}`);
       }
       this.insertClaims(agentId, files, id);
-      this.setTask(id, { status: 'in_progress', owner_id: agentId });
+      this.setTask(id, { status: 'in_progress', owner_id: agentId, ...(resumable ? { blocked_from: null } : {}) });
       this.event('task_status', { agent_id: agentId, task_id: id, data: { status: 'in_progress' } });
       return { task: this.task(id), claimed: files };
     });

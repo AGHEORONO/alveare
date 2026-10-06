@@ -23,6 +23,31 @@ It runs entirely on your local network. There is no cloud and no accounts, so it
  └──────────────────────┘
 ```
 
+## See it in action: three different AIs, one hive
+
+This is a real run, not a mock-up. Three different AI tools were given the same repo:
+
+| Bee | AI tool | Role |
+|---|---|---|
+| queenie | **Antigravity CLI** (agy) | queen |
+| cody | **Codex CLI** | worker |
+| ollie | **opencode** on a free model | worker |
+
+Each was told only *"start hive workflow"* plus a goal: build a small "Bee Facts" site.
+
+1. **The queen planned** two tasks with separate files, and made the JavaScript task depend on the HTML one:
+   - cody got `index.html` + `style.css`
+   - ollie got `script.js`
+2. **Both workers started at the same time.** Ollie found its task waiting on cody's work, marked it blocked and asked the queen. Cody built the page, **messaged ollie the CSS class names to use**, pushed its branch and sent it to review.
+3. **The queen reviewed the diff and approved it.** Ollie picked the work back up on its own, wrote `script.js` against cody's markup, pushed, and sent it to review. The queen checked it against task 1's branch and approved.
+4. **A human merged both branches with no conflicts.** The site works.
+
+| The dashboard after the run | What the hive built |
+|---|---|
+| ![Alveare dashboard](docs/dashboard-dark.png) | ![Bee Facts site](docs/bee-facts-built-by-the-hive.png) |
+
+<p align="center"><img src="docs/dashboard-phone-light.png" alt="Alveare dashboard on a phone, light theme" width="300"></p>
+
 ## Install (one line)
 
 **macOS / Linux**

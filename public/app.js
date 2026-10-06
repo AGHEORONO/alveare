@@ -283,8 +283,8 @@ function mergeHtml() {
       ${ICON.cell}
       <div class="cell-body"><span><a href="#task-${m.id}" id="mq-${m.id}">#${m.id}</a> ${esc(m.title)} · by ${esc(m.owner ?? '?')}</span><code>${esc(m.branch)}</code></div>
       <div class="merge-actions">
-        <button type="button" class="btn small" id="mq-copy-${m.id}" data-action="copy_merge" data-branch="${esc(m.branch)}" aria-label="Copy merge command for ${esc(m.branch)}">Copy command</button>
-        <button type="button" class="btn honey small" id="mq-done-${m.id}" data-action="mark_merged" data-id="${m.id}" aria-label="Mark #${m.id} as merged">Mark merged</button>
+        <button type="button" class="btn small" id="mq-copy-${m.id}" data-action="copy_merge" data-branch="${esc(m.branch)}" aria-label="Copy command for ${esc(m.branch)}">Copy command</button>
+        <button type="button" class="btn honey small" id="mq-done-${m.id}" data-action="mark_merged" data-id="${m.id}" aria-label="Mark merged: task #${m.id}">Mark merged</button>
       </div>
     </li>`).join('')}</ul>
   </section>`;
@@ -410,7 +410,8 @@ $('indep').addEventListener('click', () => {
   const on = $('indep').getAttribute('aria-checked') !== 'true';
   $('indep').setAttribute('aria-checked', String(on)); // optimistic; the next snapshot confirms
   act({ action: 'independent_queen', on }, on ? 'Independent queen on: the queen may approve her own tasks'
-    : "Independent queen off: the queen's tasks need another reviewer");
+    : "Independent queen off: the queen's tasks need another reviewer")
+    .then((r) => { if (!r?.ok) $('indep').setAttribute('aria-checked', String(!on)); }); // roll back if it failed
 });
 
 $('rotate').addEventListener('click', () => {

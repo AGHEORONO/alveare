@@ -103,7 +103,8 @@ select, input { font: inherit; color: var(--text); background: var(--sunken); bo
 .switch .knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--muted); transition: transform .2s ease, background-color .2s ease; }
 .switch[aria-checked="true"] .track { background: var(--honey); border-color: var(--honey); }
 .switch[aria-checked="true"] .knob { transform: translateX(14px); background: var(--honey-ink); }
-@media (forced-colors: active) { .switch[aria-checked="true"] .knob { background: Highlight; } }
+[data-theme="light"] .switch[aria-checked="true"] .track { border-color: var(--honey-text); }
+@media (forced-colors: active) { .switch .knob { background: CanvasText; } .switch[aria-checked="true"] .knob { background: Highlight; } }
 .top-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 .conn { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; margin-right: 4px; }
 .conn::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--faint); }
