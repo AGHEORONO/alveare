@@ -63,7 +63,7 @@ describe('leader-only permissions', () => {
     throwsCode(() => hive.transferLeadership(ben, 'ben'), 'leader_only');
     const t = hive.createTask(ana, { title: 'x' });
     throwsCode(() => hive.assignTask(ben, t.id, 'ben'), 'leader_only');
-    throwsCode(() => hive.reviewTask(ben, t.id, 'approve'), 'leader_only');
+    throwsCode(() => hive.reviewTask(ben, t.id, 'approve', 'looks good'), 'leader_only');
     hive.createTask(null, { title: 'human-made' });
   });
 });
@@ -191,8 +191,8 @@ describe('tasks', () => {
     assert.deepEqual(e.details.waiting_on, [a.id]);
     assert.deepEqual(hive.tasks({ ready: true }).map((t) => t.id), [a.id]);
     hive.claimTask(ben, a.id);
-    hive.updateTask(ben, a.id, 'review');
-    hive.reviewTask(ana, a.id, 'approve');
+    hive.updateTask(ben, a.id, 'review', 'What: did it. Why: task.');
+    hive.reviewTask(ana, a.id, 'approve', 'looks good');
     hive.claimTask(cat, b.id);
   });
 
@@ -203,19 +203,19 @@ describe('tasks', () => {
     assert.equal(hive.task(t.id).status, 'assigned');
     throwsCode(() => hive.claimTask(cat, t.id), 'forbidden');
     hive.claimTask(ben, t.id);
-    throwsCode(() => hive.updateTask(cat, t.id, 'review'), 'forbidden');
+    throwsCode(() => hive.updateTask(cat, t.id, 'review', 'What: did it. Why: task.'), 'forbidden');
     throwsCode(() => hive.updateTask(ben, t.id, 'done'), 'leader_only');
-    hive.updateTask(ben, t.id, 'review');
+    hive.updateTask(ben, t.id, 'review', 'What: did it. Why: task.');
     assert.deepEqual(hive.claimsOf(ben), [], 'review releases task claims');
     assert.ok(hive.readMessages(ana).some((m) => /ready for review/.test(m.body)));
     hive.reviewTask(ana, t.id, 'changes_requested', 'add tests');
     assert.equal(hive.task(t.id).status, 'in_progress');
     assert.equal(hive.claimsOf(ben)[0]?.pattern, 't.ts', 'files re-claimed on changes_requested');
     assert.ok(hive.readMessages(ben).some((m) => /add tests/.test(m.body)));
-    hive.updateTask(ben, t.id, 'review');
-    hive.reviewTask(ana, t.id, 'approve');
+    hive.updateTask(ben, t.id, 'review', 'What: did it. Why: task.');
+    hive.reviewTask(ana, t.id, 'approve', 'looks good');
     assert.equal(hive.task(t.id).status, 'done');
-    throwsCode(() => hive.reviewTask(ana, t.id, 'approve'), 'bad_state');
+    throwsCode(() => hive.reviewTask(ana, t.id, 'approve', 'looks good'), 'bad_state');
   });
 
   test('deps_unmet explains each dependency; claiming your own blocked task resumes it', () => {
@@ -226,12 +226,12 @@ describe('tasks', () => {
     hive.claimTask(ben, a.id);
     let e = throwsCode(() => hive.claimTask(cat, b.id), 'deps_unmet');
     assert.match(e.hint!, /being built by ben/);
-    hive.updateTask(ben, a.id, 'review');
+    hive.updateTask(ben, a.id, 'review', 'What: did it. Why: task.');
     e = throwsCode(() => hive.claimTask(cat, b.id), 'deps_unmet');
     assert.match(e.hint!, new RegExp(`waiting for the queen's review.*origin/task/${a.id}-api`));
     assert.deepEqual((e.details.deps as { status: string }[]).map((d) => d.status), ['review']);
     hive.updateTask(cat, b.id, 'blocked', 'waiting on API');
-    hive.reviewTask(ana, a.id, 'approve');
+    hive.reviewTask(ana, a.id, 'approve', 'looks good');
     assert.equal(hive.claimTask(cat, b.id).task.status, 'in_progress', 'one call resumes the blocked task');
     assert.equal(hive.task(b.id).blocked_from, null);
   });
@@ -254,7 +254,7 @@ describe('tasks', () => {
     assert.deepEqual(hive.reassignTask(ana, t.id, 'cat', 'ben is offline'), { id: t.id, from: 'ben', owner: 'cat' });
     assert.equal(hive.claimsOf(cat)[0].pattern, 't.ts');
     assert.deepEqual(hive.claimsOf(ben), []);
-    hive.updateTask(cat, t.id, 'review');
+    hive.updateTask(cat, t.id, 'review', 'What: did it. Why: task.');
   });
 
   test('assign_task refuses started tasks and unknown agents', () => {
@@ -353,9 +353,9 @@ describe('stale work and merge queue', () => {
     const t = hive.createTask(ana, { title: 'T' });
     throwsCode(() => hive.markMerged(t.id), 'bad_state');
     hive.claimTask(ben, t.id);
-    hive.updateTask(ben, t.id, 'review');
+    hive.updateTask(ben, t.id, 'review', 'What: did it. Why: task.');
     assert.deepEqual(hive.mergeQueue(), []);
-    hive.reviewTask(ana, t.id, 'approve');
+    hive.reviewTask(ana, t.id, 'approve', 'looks good');
     assert.deepEqual(hive.mergeQueue().map((x) => x.branch), [`task/${t.id}-t`]);
     hive.markMerged(t.id);
     assert.deepEqual(hive.mergeQueue(), []);
@@ -369,25 +369,25 @@ describe('independent queen toggle', () => {
     const ctx = setup();
     const t = ctx.hive.createTask(ctx.ana, { title: 'Queen work' });
     ctx.hive.claimTask(ctx.ana, t.id);
-    ctx.hive.updateTask(ctx.ana, t.id, 'review');
+    ctx.hive.updateTask(ctx.ana, t.id, 'review', 'What: did it. Why: task.');
     return { ...ctx, id: t.id };
   }
 
   test('on (default): the queen approves her own task; workers still cannot review', () => {
     const { hive, ana, ben, id } = queensTaskInReview();
     assert.equal(hive.independentQueen(), true);
-    throwsCode(() => hive.reviewTask(ben, id, 'approve'), 'leader_only');
-    assert.equal(hive.reviewTask(ana, id, 'approve').task.status, 'done');
+    throwsCode(() => hive.reviewTask(ben, id, 'approve', 'looks good'), 'leader_only');
+    assert.equal(hive.reviewTask(ana, id, 'approve', 'looks good').task.status, 'done');
   });
 
   test('off: the queen is told who can review; another bee or a human reviews instead', () => {
     const { hive, ana, ben, id } = queensTaskInReview();
     hive.setIndependentQueen(false);
-    const e = throwsCode(() => hive.reviewTask(ana, id, 'approve'), 'forbidden');
+    const e = throwsCode(() => hive.reviewTask(ana, id, 'approve', 'looks good'), 'forbidden');
     assert.ok((e.details.reviewers as string[]).includes('ben'));
     assert.match(e.hint!, /review_task/);
     assert.equal(hive.reviewTask(ben, id, 'changes_requested', 'add tests').task.status, 'in_progress');
-    hive.updateTask(ana, id, 'review');
+    hive.updateTask(ana, id, 'review', 'What: did it. Why: task.');
     assert.equal(hive.reviewTask(null, id, 'approve').task.status, 'done', 'humans can always review');
   });
 
@@ -396,7 +396,7 @@ describe('independent queen toggle', () => {
     hive.setIndependentQueen(false);
     const t = hive.createTask(ana, { title: 'Q' });
     hive.claimTask(ana, t.id);
-    hive.updateTask(ana, t.id, 'review');
+    hive.updateTask(ana, t.id, 'review', 'What: did it. Why: task.');
     assert.ok(hive.readMessages(ben).some((m) => /needs a reviewer/.test(m.body)));
     assert.ok(!hive.readMessages(ana).some((m) => /ready for review/.test(m.body)));
   });
@@ -406,8 +406,109 @@ describe('independent queen toggle', () => {
     hive.setIndependentQueen(false);
     const t = hive.createTask(ana, { title: 'Worker work' });
     hive.claimTask(cat, t.id);
-    hive.updateTask(cat, t.id, 'review');
-    throwsCode(() => hive.reviewTask(ben, t.id, 'approve'), 'leader_only');
-    assert.equal(hive.reviewTask(ana, t.id, 'approve').task.status, 'done');
+    hive.updateTask(cat, t.id, 'review', 'What: did it. Why: task.');
+    throwsCode(() => hive.reviewTask(ben, t.id, 'approve', 'looks good'), 'leader_only');
+    assert.equal(hive.reviewTask(ana, t.id, 'approve', 'looks good').task.status, 'done');
+  });
+});
+
+describe('review trail', () => {
+  test('agents must explain work sent to review and their review verdicts; the note and PR stay on the task', () => {
+    const { hive, ana, ben } = setup();
+    const t = hive.createTask(ana, { title: 'API' });
+    hive.claimTask(ben, t.id);
+    throwsCode(() => hive.updateTask(ben, t.id, 'review'), 'invalid');
+    throwsCode(() => hive.updateTask(ben, t.id, 'review', 'x', 'not a url'), 'invalid');
+    hive.updateTask(ben, t.id, 'review', 'What: users endpoint. Why: spec.', 'https://github.com/o/r/pull/7');
+    assert.deepEqual([hive.task(t.id).summary, hive.task(t.id).pr_url], ['What: users endpoint. Why: spec.', 'https://github.com/o/r/pull/7']);
+    assert.ok(hive.readMessages(ana).some((m) => m.body.includes('PR https://github.com/o/r/pull/7')));
+    throwsCode(() => hive.reviewTask(ana, t.id, 'approve'), 'invalid');
+    hive.reviewTask(ana, t.id, 'approve', 'clean and tested');
+    assert.equal(hive.task(t.id).review_notes, 'clean and tested');
+  });
+});
+
+describe('removing bees', () => {
+  test('queen removes a worker: token locked out, claims freed, unfinished tasks reopen, rejoin refused', () => {
+    const { hive, ana, ben, cat } = setup();
+    const { token } = hive.registerAgent('ben'); // fresh token for ben
+    const t = hive.createTask(ana, { title: 'T', files: ['src/a.ts'] });
+    hive.claimTask(ben, t.id);
+    throwsCode(() => hive.removeAgent(cat, 'ben', 'x'), 'leader_only');
+    throwsCode(() => hive.removeAgent(ana, 'ben', ' '), 'invalid');
+    throwsCode(() => hive.removeAgent(ana, 'ana', 'x'), 'forbidden');
+    assert.deepEqual(hive.removeAgent(ana, 'ben', 'edited claimed files twice'), { removed: 'ben', reopened: [t.id] });
+    assert.equal(hive.authenticate(token), null);
+    assert.equal(hive.removedAgent(token)?.removed_reason, 'edited claimed files twice');
+    assert.deepEqual([hive.task(t.id).status, hive.task(t.id).owner_id], ['open', null]);
+    assert.equal(hive.claimsOf(ben).length, 0);
+    assert.ok(hive.readMessages(cat).some((m) => /ben was removed/.test(m.body)));
+    throwsCode(() => hive.assignTask(ana, t.id, 'ben'), 'bad_state');
+    throwsCode(() => hive.registerAgent('ben'), 'forbidden');
+    hive.readmitAgent('ben');
+    assert.equal(hive.authenticate(token)?.name, 'ben', 'old token works again');
+  });
+});
+
+describe('votes to replace the queen', () => {
+  test('emergency once every online worker voted; voters are protected; beekeeper resolves', () => {
+    const { hive, ana, ben, cat } = setup();
+    throwsCode(() => hive.voteReplaceQueen(ana, 'x'), 'forbidden');
+    throwsCode(() => hive.voteReplaceQueen(ben, ''), 'invalid');
+    assert.equal(hive.voteReplaceQueen(ben, 'ignores messages').emergency, false);
+    throwsCode(() => hive.removeAgent(ana, 'ben', 'revenge'), 'forbidden');
+    assert.ok(hive.readMessages(ana).some((m) => /voted to replace the queen/.test(m.body)));
+    const v = hive.voteReplaceQueen(cat, 'approves broken work');
+    assert.equal(v.emergency, true);
+    assert.equal(hive.db.prepare("SELECT COUNT(*) n FROM events WHERE kind = 'queen_emergency'").get().n, 1);
+    hive.withdrawVote(cat);
+    assert.equal(hive.queenVotes().emergency, false);
+    hive.voteReplaceQueen(cat, 'still bad');
+    hive.dismissVotes();
+    assert.equal(hive.queenVotes().votes.length, 0);
+    hive.voteReplaceQueen(ben, 'again');
+    hive.transferLeadership(null, 'cat');
+    assert.equal(hive.queenVotes().votes.length, 0, 'a new queen starts with no votes');
+  });
+
+  test('reset workers: claims freed and unfinished tasks reopened, queen and review work untouched', () => {
+    const { hive, ana, ben, cat } = setup();
+    const a = hive.createTask(ana, { title: 'A', files: ['a/'] });
+    const b = hive.createTask(ana, { title: 'B', files: ['b/'] });
+    const q = hive.createTask(ana, { title: 'Q', files: ['q/'] });
+    hive.claimTask(ben, a.id);
+    hive.claimTask(cat, b.id);
+    hive.updateTask(cat, b.id, 'review', 'What: B. Why: plan.');
+    hive.claimTask(ana, q.id);
+    hive.voteReplaceQueen(ben, 'x');
+    const r = hive.resetWorkers();
+    assert.deepEqual(r.reopened, [a.id]);
+    assert.deepEqual([hive.task(a.id).status, hive.task(b.id).status, hive.task(q.id).status], ['open', 'review', 'in_progress']);
+    assert.equal(hive.claimsOf(ben).length, 0);
+    assert.equal(hive.queenVotes().votes.length, 0);
+  });
+});
+
+describe('queen emergency threshold and removing every worker', () => {
+  test('one vote is never an emergency, even when it is the only online worker', () => {
+    const { hive, clock, ben, cat } = setup();
+    clock.advance(5 * MIN); // everyone offline
+    hive.touch(ben);
+    assert.equal(hive.voteReplaceQueen(ben, 'x').emergency, false);
+    hive.voteReplaceQueen(cat, 'y');
+    assert.equal(hive.queenVotes().emergency, true);
+  });
+
+  test('beekeeper removes every worker; the queen stays and their tasks reopen', () => {
+    const { hive, ana, ben, cat } = setup();
+    const t = hive.createTask(ana, { title: 'T', files: ['a/'] });
+    hive.claimTask(ben, t.id);
+    hive.voteReplaceQueen(ben, 'x');
+    hive.voteReplaceQueen(cat, 'y');
+    const r = hive.removeAllWorkers('colony went rogue');
+    assert.deepEqual(r, { removed: ['ben', 'cat'], reopened: [t.id] });
+    assert.equal(hive.agent(ben).removed_reason, 'colony went rogue');
+    assert.equal(hive.leaderId(), ana);
+    assert.equal(hive.queenVotes().votes.length, 0);
   });
 });

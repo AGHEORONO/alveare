@@ -9,8 +9,11 @@ export { VERSION };
 
 const INSTRUCTIONS = `Alveare (hive) coordinates several AI coding agents on one repo.
 Start with whoami, read_messages, list_tasks. Never edit files claimed by others (check_files); message them or the leader.
-claim_task claims the task's files; claim_files before touching anything else. Set status "review" when done; only the leader approves.
-When a result contains "inbox", call read_messages before continuing.`;
+claim_task claims the task's files; claim_files before touching anything else. Set status "review" when done, with a short note (what, why, decisions); only the leader approves.
+When a result contains "inbox", call read_messages before continuing.
+The leader (queen) plans with plan_feature, reviews with review_task, and may remove_agent bees that ignore the workflow.
+Workers may vote_replace_queen(reason) if the queen leads badly; when at least two workers voted and every online worker has, a human decides.
+The full workflow is in AGENTS.md / CLAUDE.md under "Alveare team workflow".`;
 
 type Json = Record<string, unknown>;
 
@@ -50,10 +53,12 @@ export function buildMcpServer(hive: Hive, agentId: string): McpServer {
     const leader = hive.isLeader(me);
     const reviews = leader ? hive.tasks({ status: 'review' }).length : 0;
     const stale = leader ? hive.staleTasks() : [];
+    const votes = leader ? hive.queenVotes() : null;
     return {
       ...data,
       ...(unread ? { inbox: unread } : {}),
       ...(reviews ? { reviews_waiting: reviews } : {}),
+      ...(votes?.votes.length ? { replace_queen_votes: `${votes.votes.length} of ${votes.online_workers} online workers want a new queen${votes.emergency ? '; the beekeeper has been alerted' : ''}. read_messages for their reasons and fix what they raise.` } : {}),
       ...(stale.length ? { stale_tasks: stale.map((t) => `#${t.id} (${t.owner} silent ${Math.round(t.offline_for_s / 60)}m: reassign_task?)`) } : {}),
     };
   });
@@ -80,7 +85,7 @@ export function buildMcpServer(hive: Hive, agentId: string): McpServer {
     const leader = hive.leaderId();
     const running = hive.db.prepare("SELECT agent_id, COUNT(*) n FROM subagents WHERE status = 'running' GROUP BY agent_id").all() as { agent_id: string; n: number }[];
     return {
-      agents: hive.agents().map((a) => {
+      agents: hive.agents().filter((a) => !a.removed_at).map((a) => {
         const cur = hive.tasks({ owner: a.id, status: 'in_progress' })[0];
         const subs = running.find((r) => r.agent_id === a.id)?.n ?? 0;
         return {
@@ -126,10 +131,15 @@ export function buildMcpServer(hive: Hive, agentId: string): McpServer {
   }));
 
   tool('update_task', {
-    description: 'Move your task: "review" when done (releases its claims, notifies leader), "blocked" with a note, "in_progress" to unblock.',
-    inputSchema: { id: z.number().int(), status: z.enum(['in_progress', 'review', 'blocked']), note: z.string().optional() },
-  }, ({ id, status, note }) => run(() => {
-    const t = hive.updateTask(me, id, status, note);
+    description: 'Move your task: "review" when done (releases its claims, notifies leader; note required), "blocked" with a note, "in_progress" to unblock.',
+    inputSchema: {
+      id: z.number().int(),
+      status: z.enum(['in_progress', 'review', 'blocked']),
+      note: z.string().optional().describe('for review: "What: ... Why: ... Decisions: ..." in 2-3 lines; add more only if the reviewer needs it'),
+      pr: z.string().optional().describe('pull request URL, if you opened one'),
+    },
+  }, ({ id, status, note, pr }) => run(() => {
+    const t = hive.updateTask(me, id, status, note, pr);
     return { id, status: t.status };
   }));
 
@@ -153,6 +163,17 @@ export function buildMcpServer(hive: Hive, agentId: string): McpServer {
     description: 'Unread messages for you (direct, broadcast, and "leader" if you lead). Pass since=<id> to re-read history.',
     inputSchema: { since: z.number().int().optional() },
   }, ({ since }) => run(() => ({ messages: hive.readMessages(me, since).map((m) => messageView(hive, m)) })));
+
+  tool('vote_replace_queen', {
+    description: 'Vote that the queen should be replaced (bad plans, ignored messages, broken approvals, unfair removals). When at least two workers voted and every online worker has, the beekeeper (a human) gets an emergency and decides. Voting again updates your reason.',
+    inputSchema: { reason: z.string().min(1).describe('concrete examples; the beekeeper reads this') },
+  }, ({ reason }) => run(() => {
+    const v = hive.voteReplaceQueen(me, reason);
+    return { votes: v.votes.length, online_workers: v.online_workers, emergency: v.emergency };
+  }));
+
+  tool('withdraw_vote', { description: 'Take back your vote to replace the queen.' },
+    () => run(() => hive.withdrawVote(me)));
 
   tool('report_subagent', {
     description: 'Manual subagent tracking (only needed if Hive hooks are not installed).',
@@ -207,15 +228,25 @@ export function buildMcpServer(hive: Hive, agentId: string): McpServer {
   }, ({ id, agent, note }) => run(() => hive.reassignTask(me, id, agent, note)));
 
   tool('review_task', {
-    description: '[leader] Approve (done; humans merge) or request changes (back to in_progress) for a task in review. When independent_queen is false, the queen cannot review her own tasks and any other bee reviews them instead.',
-    inputSchema: { id: z.number().int(), verdict: z.enum(['approve', 'changes_requested']), notes: z.string().optional() },
+    description: '[leader] Approve (done; humans merge) or request changes (back to in_progress) for a task in review. Notes are required: one or two lines on why. When independent_queen is false, the queen cannot review her own tasks and any other bee reviews them instead.',
+    inputSchema: { id: z.number().int(), verdict: z.enum(['approve', 'changes_requested']), notes: z.string().describe('why you approve, or exactly what must change') },
   }, ({ id, verdict, notes }) => run(() => {
     const r = hive.reviewTask(me, id, verdict, notes);
-    return { id, status: r.task.status, ...(r.warnings.length ? { warnings: r.warnings } : {}) };
+    const pr = r.task.pr_url;
+    return {
+      id, status: r.task.status, ...(r.warnings.length ? { warnings: r.warnings } : {}),
+      ...(pr ? { pr, do: `put your verdict on GitHub too: gh pr comment ${pr} --body "${verdict === 'approve' ? 'Approved' : 'Changes requested'} by the queen: <your notes>"` } : {}),
+    };
   }));
 
   tool('force_release', { description: '[leader] Release anyone\'s claims overlapping these paths (owners are notified).', inputSchema: { paths } },
     ({ paths }) => run(() => hive.forceRelease(me, paths)));
+
+  tool('remove_agent', {
+    description: '[leader] Throw a bee out of the hive for not doing the work well (ignores the workflow, edits claimed files, skips notes, keeps failing review after warnings). Its token stops working, its claims are freed and its unfinished tasks reopen. A human can let it back in. You cannot remove a bee that voted to replace you.',
+    inputSchema: { agent: z.string(), reason: z.string().min(1).describe('shown to every bee and the beekeeper') },
+    annotations: { destructiveHint: true },
+  }, ({ agent, reason }) => run(() => hive.removeAgent(me, agent, reason)));
 
   tool('post_status', { description: '[leader] Post a status summary to everyone and the dashboard feed.', inputSchema: { summary: z.string().min(1) } },
     ({ summary }) => run(() => ({ id: hive.postStatus(me, summary).id })));
@@ -240,6 +271,13 @@ function bearer(req: IncomingMessage): string | null {
 export async function handleMcp(hive: Hive, req: IncomingMessage, res: ServerResponse, body: unknown): Promise<void> {
   const token = bearer(req);
   const agent = token ? hive.authenticate(token) : null;
+  const removed = !agent && token ? hive.removedAgent(token) : null;
+  if (removed) {
+    res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({
+      error: `${removed.name} was removed from the hive: ${removed.removed_reason ?? 'no reason given'}. Stop working on hive tasks; ask the beekeeper (a human) to let you back in.`,
+    }));
+    return;
+  }
   if (!agent) {
     res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'invalid or missing Hive token; run hive join' }));
     return;

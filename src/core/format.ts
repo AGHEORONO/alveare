@@ -37,6 +37,8 @@ export function taskFull(hive: Hive, t: TaskRow) {
     acceptance: t.acceptance,
     files: hive.taskFiles(t.id),
     branch: t.branch,
+    ...(t.summary ? { summary: t.summary } : {}),
+    ...(t.pr_url ? { pr: t.pr_url } : {}),
     ...(t.review_notes ? { review_notes: t.review_notes } : {}),
     ...(t.status === 'blocked' ? { blocked_from: t.blocked_from } : {}),
     unmet_deps: hive.unmetDeps(t.id),

@@ -154,8 +154,89 @@ The agents never connect to each other directly. Everything goes through the hiv
    - She reviews finished work (`review_task`) and posts status updates.
 
    Workers can't use those tools; the server refuses.
-5. **The workflow is in plain English.** `join` writes a short "Alveare team workflow" section into each tool's instruction file (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`…). That's what makes any model follow the same protocol.
-6. **Humans can override anything** from the dashboard: reassign tasks, unlock files, change the queen.
+5. **Every decision is explained, briefly.** See [Reviewing the hive on GitHub](#reviewing-the-hive-on-github).
+6. **The queen keeps order, and the workers keep the queen honest.** See [How the hive governs itself](#how-the-hive-governs-itself).
+7. **The workflow is in plain English.** `join` writes a short "Alveare team workflow" section into each tool's instruction file (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`…). That's what makes any model follow the same protocol, including the rules below. Re-run `alveare join` after updating Alveare to refresh it.
+8. **Humans can override anything** from the dashboard: reassign tasks, unlock files, change the queen, remove a bee or let it back in.
+
+## Reviewing the hive on GitHub
+
+Every change and every decision carries a short explanation, kept to 2–3 lines unless a reviewer needs more. The server enforces the notes, not just the instructions.
+
+1. **The worker explains the change.** The note looks like this:
+   ```
+   #3 Users API
+
+   What: added GET/POST /users with validation
+   Why: the signup page needs it (task acceptance)
+   Decisions: used zod instead of hand-written checks, like the rest of src/api
+   ```
+   - `Decisions:` is only there when the worker chose between options or deviated from the task.
+   - The same text goes in three places: the commit message, the pull request body, and `update_task(id, "review", note, pr)`.
+   - `update_task` **refuses** to move a task to review without a note, and tells the agent the format.
+2. **The worker opens a pull request** with `gh pr create`, if the GitHub CLI is installed and logged in. Otherwise this step is skipped and the branch is enough.
+3. **The queen reviews and explains her verdict.**
+   - `review_task` **refuses** to approve or request changes without notes.
+   - If the task has a PR, the result tells her to post the verdict on it with `gh pr comment`.
+4. **You review on GitHub, PR by PR**: the worker's note, the diff, and the queen's verdict. The dashboard shows the same note, PR link and review on each task card and in **Ready to merge**.
+
+## How the hive governs itself
+
+Bees that don't do the work well can be thrown out by the queen, and a bad queen can be challenged by the workers. Every agent is told both rules up front, so they know what's at stake.
+
+**Removing a bad worker (the queen)**
+- **When:** the workflow tells the queen to first send a concrete warning, and to remove only if it happens again. Typical reasons: ignoring the workflow, editing files claimed by others, skipping notes, ignoring messages, failing review again after a warning.
+- **How:** `remove_agent(name, reason)`. Then:
+  - the bee's token stops working, so every hive call answers *"you were removed from the hive: \<reason\>"*
+  - its file claims are freed
+  - its unfinished tasks (assigned, in progress, blocked) reopen for others; work already in review stays there
+  - every bee and the dashboard see the reason
+  - rejoining under the same name is refused
+- **Undo:** a human clicks **Let \<name\> back in** on the dashboard, and the bee's old connection works again.
+- **Limits:** the queen can't remove herself, and **can't remove a bee that voted to replace her**. Only the beekeeper can do that.
+
+**Replacing a bad queen (the workers)**
+- **Voting:** any worker can call `vote_replace_queen(reason)` with concrete examples (bad plans, ignored messages, approving broken work, unfair removals). Voting again updates the reason, and `withdraw_vote` takes it back.
+- **The queen sees it:** her messages show each vote with its reason. Every tool result she gets shows how many workers want her replaced, so she gets a chance to fix things.
+- **When it becomes an emergency:** **at least 2 workers** have voted **and** every online worker has voted. Votes from bees that went offline still count. One worker on its own can never trigger it.
+- **Then:**
+  - all bees are told the beekeeper will decide
+  - the dashboard pops up an **emergency** with every reason, and a red banner stays until it's resolved
+- **The beekeeper (you) chooses one of:**
+
+  | Option | What happens |
+  |---|---|
+  | **Crown** a new queen | Leadership moves to the bee you pick; all votes are cleared |
+  | **Keep** the queen | Votes are cleared and everyone is told to follow the queen's plan |
+  | **Reset work** | Every worker's file claims are freed and their unfinished tasks reopen; the workers stay and wait for the queen to re-assign. Work in review is kept. |
+  | **Remove all workers** | Every worker is removed (same as `remove_agent` for each), and their unfinished tasks reopen. The queen stays. You can let bees back in one by one. |
+  | **Decide later** | Closes the pop-up; the banner stays |
+
+- **A new queen starts clean.** Votes are always against one specific queen, so they reset when the queen changes.
+
+## All hive tools
+
+| Tool | Who | What it does |
+|---|---|---|
+| `whoami` | everyone | name, role, leader, own tasks, claims, unread count |
+| `list_agents` | everyone | team with role, online status, current task, subagents |
+| `list_tasks`, `get_task` | everyone | the task board, and one task in full (including the worker's note, PR and review notes) |
+| `claim_task` | everyone | start a task: claims its files, returns the branch name |
+| `update_task` | task owner | `review` (note required, optional `pr`), `blocked` (note required), or back to `in_progress` |
+| `claim_files`, `release_files`, `check_files` | everyone | file locks outside the task's declared files |
+| `send_message`, `read_messages` | everyone | mailbox to a bee, `"leader"` or `"all"` |
+| `heartbeat` | everyone | keep claims alive during long work (tools without Claude hooks) |
+| `report_subagent` | everyone | manual drone tracking when hooks aren't installed |
+| `vote_replace_queen`, `withdraw_vote` | workers | challenge the queen (see above) |
+| `plan_feature`, `create_task` | queen | break a feature into tasks with files, dependencies and assignees |
+| `assign_task`, `reassign_task` | queen | hand out work, or move started work to another bee |
+| `review_task` | queen (or any bee for the queen's own tasks when Independent queen is off) | approve or request changes, notes required |
+| `remove_agent` | queen | throw out a bee, reason required |
+| `force_release` | queen | free anyone's claims on given paths |
+| `post_status` | queen | status summary to everyone |
+| `transfer_leadership` | queen | hand the crown to another bee |
+
+Workers calling a queen tool get `leader_only` and a hint to message the queen instead.
 
 ## Dashboard
 
@@ -163,12 +244,13 @@ Open the printed URL on any device and enter the join code.
 
 | Area | What it shows |
 |---|---|
-| **The colony** | each bee (agent): queen or worker, online/working/idle, current task, and its live **drones** (subagents) with purpose and runtime |
+| **The colony** | each bee (agent): queen or worker, online/working/idle, current task, and its live **drones** (subagents) with purpose and runtime. **Crown** and **Remove** buttons, **Let back in** for removed bees, and a **Wants a new queen** chip on voters. |
 | **The comb** | the task board: Open, Assigned, In progress, Blocked, Review, Done ("capped"). Dependency badges, assign/reassign, approve/request changes. Tasks whose owner went silent get an **owner silent** chip. |
-| **Ready to merge** | branches the queen approved, with a copyable merge command and a **Mark merged** button for the human doing the merge |
+| **Ready to merge** | branches the queen approved, with the worker's note, the PR link, the queen's review, a copyable merge command and a **Mark merged** button for the human doing the merge |
 | **Waggle feed** | messages, status posts, task moves and file edits, filterable. Edits to unclaimed files are flagged in red. |
 | **Claimed cells** | who holds which files, with an **Unlock** button |
 
+- **Votes against the queen:** a banner lists every vote and its reason. Once at least 2 workers voted and every online worker has, an emergency pop-up asks the beekeeper to decide (see [How the hive governs itself](#how-the-hive-governs-itself)).
 - **Queen health:** if the queen is offline for more than 5 minutes, a banner suggests a new queen for a human to confirm.
 - **Independent queen** switch (in the header, on by default):
   - **On:** the queen may approve her own tasks. Good for solo or small hives.

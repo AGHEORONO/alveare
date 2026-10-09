@@ -119,7 +119,12 @@ export async function startServer(opts: ServerOptions): Promise<HiveServer> {
       const ip = req.socket.remoteAddress ?? '?';
       const { code, name } = (await readJson(req)) as { code?: string; name?: string };
       if (!code || !hive.checkJoinCode(code)) { failed(); return json(res, 403, { ok: false, error: 'wrong join code' }); }
-      const { agent, token } = hive.registerAgent(String(name ?? ''));
+      let reg: ReturnType<Hive['registerAgent']>;
+      try { reg = hive.registerAgent(String(name ?? '')); } catch (e) {
+        if (!(e instanceof HiveError)) throw e;
+        return json(res, e.code === 'forbidden' ? 403 : 400, { ...errorView(e), error: e.message });
+      }
+      const { agent, token } = reg;
       log(`${agent.name} joined from ${ip}`);
       const base = `http://${req.headers.host}`;
       return json(res, 200, {
@@ -253,6 +258,11 @@ function humanAction(hive: Hive, b: Record<string, unknown>): unknown {
     case 'set_leader': return hive.transferLeadership(null, str('agent'));
     case 'independent_queen': return { independent_queen: hive.setIndependentQueen(b.on === true) };
     case 'mark_merged': return hive.markMerged(id, b.merged !== false);
+    case 'remove_agent': return hive.removeAgent(null, str('agent'), str('reason'));
+    case 'readmit': return hive.readmitAgent(str('agent'));
+    case 'dismiss_votes': return hive.dismissVotes();
+    case 'reset_workers': return hive.resetWorkers();
+    case 'remove_workers': return hive.removeAllWorkers(typeof b.reason === 'string' && b.reason.trim() ? b.reason : 'removed by the beekeeper in a queen emergency');
     case 'rotate_code': { const code = hive.rotateJoinCode(); hive.event('code_rotated'); return { code }; }
     default: throw new HiveError('invalid', `unknown action ${String(b.action)}`);
   }

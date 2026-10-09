@@ -26,6 +26,7 @@ export function snapshot(hive: Hive, hooks: HookIngest) {
       name: a.name,
       role: a.id === leaderId ? 'leader' : 'member',
       host: !!a.is_host,
+      ...(a.removed_at ? { removed: { at: a.removed_at, reason: a.removed_reason } } : {}),
       online: hive.isOnline(a),
       last_seen: a.last_seen_at,
       activity: act && hive.isOnline(a) ? act.state : null,
@@ -40,7 +41,10 @@ export function snapshot(hive: Hive, hooks: HookIngest) {
 
   const stale = new Set(hive.staleTasks().map((t) => t.id));
   const tasks = hive.tasks().map((t) => ({ ...taskFull(hive, t), updated_at: t.updated_at, stale: stale.has(t.id) }));
-  const merge_queue = hive.mergeQueue().map((t) => ({ id: t.id, title: t.title, branch: t.branch, owner: nameOf(hive, t.owner_id), approved_at: t.updated_at }));
+  const merge_queue = hive.mergeQueue().map((t) => ({
+    id: t.id, title: t.title, branch: t.branch, owner: nameOf(hive, t.owner_id), approved_at: t.updated_at,
+    summary: t.summary, review_notes: t.review_notes, pr: t.pr_url,
+  }));
 
   const claims = hive.activeClaims().map((c) => ({ ...claimView(hive, c), expires_at: c.expires_at }));
 
@@ -57,6 +61,7 @@ export function snapshot(hive: Hive, hooks: HookIngest) {
     join_code: hive.joinCode(),
     leader: hive.leaderStatus(),
     independent_queen: hive.independentQueen(),
+    queen_votes: hive.queenVotes(),
     claim_ttl_ms: hive.claimTtlMs,
     agents,
     tasks,
@@ -98,6 +103,13 @@ function feedItem(hive: Hive, e: EventRow): { id: number; ts: number; kind: stri
     case 'todo_done': return { ...base, text: `completed todo: ${d.title ?? ''}` };
     case 'code_rotated': return { ...base, text: 'rotated the join code' };
     case 'setting': return { ...base, text: d.independent_queen ? 'turned Independent queen on: the queen may approve her own tasks' : "turned Independent queen off: the queen's tasks need another reviewer" };
+    case 'agent_removed': return { ...base, text: `was removed from the hive by the ${d.by === 'human' ? 'beekeeper' : 'queen'}: ${d.reason}` };
+    case 'agent_readmitted': return { ...base, text: 'was let back into the hive by the beekeeper' };
+    case 'queen_vote': return { ...base, text: `voted to replace the queen: ${d.reason}` };
+    case 'vote_withdrawn': return { ...base, text: 'withdrew their vote to replace the queen' };
+    case 'queen_emergency': return { ...base, who: 'hive', text: 'Emergency: every online worker voted to replace the queen. The beekeeper must decide.', flag: 'emergency' };
+    case 'votes_dismissed': return { ...base, who: 'beekeeper', text: 'kept the queen and cleared the votes' };
+    case 'workers_reset': return { ...base, who: 'beekeeper', text: `reset all workers${d.reopened?.length ? `; reopened ${d.reopened.map((i: number) => `#${i}`).join(', ')}` : ''}` };
     case 'task_merged': return { ...base, text: d.merged ? `merged ${d.branch} (task #${e.task_id})` : `un-marked ${d.branch} as merged` };
     default: return { ...base, text: e.kind };
   }

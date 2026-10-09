@@ -115,6 +115,26 @@ select, input { font: inherit; color: var(--text); background: var(--sunken); bo
 .banner { position: relative; z-index: 2; margin: 16px 28px 0; padding: 14px 16px; border-radius: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
   background: var(--wait-soft); color: var(--wait-text); border: 1px solid var(--honey-line); animation: rise .3s ease both; }
 
+.banner.vote-info { background: var(--surface-2); color: var(--text-2); border-color: var(--control); }
+.banner.vote-emergency { background: var(--bad-soft); color: var(--bad-text); border-color: var(--bad); }
+.banner ul { margin: 0; padding-left: 18px; flex-basis: 100%; }
+
+/* emergency dialog */
+.emergency { width: min(560px, calc(100vw - 2 * var(--gutter))); max-height: calc(100vh - 32px); overflow: auto; padding: 24px; border-radius: 20px;
+  background: var(--surface); color: var(--text); border: 2px solid var(--bad); box-shadow: var(--shadow); }
+.emergency::backdrop { background: rgba(10, 8, 4, .6); }
+.emergency h2 { font: 700 24px var(--display); margin: 0 0 8px; color: var(--bad-text); }
+.emergency h3 { font-size: 15px; margin: 16px 0 6px; }
+.emergency p { margin: 0; }
+.emergency ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; overflow-wrap: anywhere; }
+.em-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 12px; }
+.em-actions .row { flex-basis: 100%; }
+
+.bee.removed { border-style: dashed; }
+.bee.removed .hexav { opacity: .6; }
+.chip.removed-chip, .chip.vote-chip { border-color: var(--bad); color: var(--bad-text); }
+.removed-why { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+
 /* layout */
 main { position: relative; z-index: 1; display: grid; gap: 24px; padding: 24px 28px 48px; max-width: 1680px; margin: 0 auto;
   grid-template-columns: minmax(0, 330px) minmax(0, 1fr) minmax(0, 380px); align-items: start; }
@@ -278,6 +298,7 @@ body.has-toast main { padding-bottom: 140px; }
 /* Pause also freezes the looping animations (WCAG 2.2.2) */
 body.paused *, body.paused *::before, body.paused *::after { animation-play-state: paused !important; }
 @media (forced-colors: active) {
+  .emergency { border-color: CanvasText; }
   .segmented button[aria-pressed="true"], .tabbar button[aria-current="true"] { outline: 2px solid Highlight; }
 }
 

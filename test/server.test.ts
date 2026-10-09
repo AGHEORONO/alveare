@@ -80,3 +80,25 @@ test('join and dashboard login: wrong codes are rate limited; static files and t
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a removed bee is told why on MCP and on rejoin', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hive-srv-'));
+  const s = await startServer({ dbFile: join(dir, 'r.db'), port: 0, host: '127.0.0.1' });
+  const base = `http://127.0.0.1:${s.port}`;
+  try {
+    const code = s.hive.joinCode();
+    await post(`${base}/api/join`, { code, name: 'lead' });
+    const mem = await (await post(`${base}/api/join`, { code, name: 'mem' })).json() as { token: string };
+    s.hive.removeAgent(null, 'mem', 'kept ignoring claims');
+    const r = await post(`${base}/mcp`, { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      { authorization: `Bearer ${mem.token}`, accept: 'application/json, text/event-stream' });
+    assert.equal(r.status, 403);
+    assert.match(((await r.json()) as { error: string }).error, /removed from the hive: kept ignoring claims/);
+    const j = await post(`${base}/api/join`, { code, name: 'mem' });
+    assert.equal(j.status, 403);
+    assert.match(((await j.json()) as { error: string }).error, /removed/);
+  } finally {
+    await s.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

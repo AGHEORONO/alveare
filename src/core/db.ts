@@ -155,6 +155,19 @@ const MIGRATIONS: string[] = [
   `,
   // v2: humans mark approved branches as merged (merge queue on the dashboard)
   `ALTER TABLE tasks ADD COLUMN merged_at INTEGER;`,
+  // v3: review trail (worker's hand-off note, PR link), removed bees, votes to replace the queen
+  `
+  ALTER TABLE tasks ADD COLUMN summary TEXT;
+  ALTER TABLE tasks ADD COLUMN pr_url TEXT;
+  ALTER TABLE agents ADD COLUMN removed_at INTEGER;
+  ALTER TABLE agents ADD COLUMN removed_reason TEXT;
+  CREATE TABLE queen_votes (
+    agent_id TEXT PRIMARY KEY REFERENCES agents(id),
+    queen_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 export function openDb(file: string): DB {

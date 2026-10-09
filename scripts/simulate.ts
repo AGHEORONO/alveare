@@ -81,7 +81,7 @@ async function main() {
     const deny = await m1.call('assign_task', { id: id.docs, agent: 'm1' });
     check(!deny.ok && deny.error === 'leader_only' && deny.leader === 'lead', `member assign_task rejected → ${JSON.stringify(deny)}`);
     check((await m2.call('create_task', { title: 'sneaky' })).error === 'leader_only', 'member create_task rejected');
-    check((await m3.call('review_task', { id: id.api, verdict: 'approve' })).error === 'leader_only', 'member review_task rejected');
+    check((await m3.call('review_task', { id: id.api, verdict: 'approve', notes: 'looks good' })).error === 'leader_only', 'member review_task rejected');
     check((await m1.call('update_task', { id: id.api, status: 'review' })).error === 'forbidden', 'cannot update a task you do not own');
 
     console.log('\nrace: 3 members claim the same task at once');
@@ -119,7 +119,7 @@ async function main() {
     const rv = await other.call('update_task', { id: id.ui, status: 'review', note: 'done' });
     check(rv.ok && rv.status === 'review', 'member set review');
     check((await lead.call('whoami')).reviews_waiting === 1, 'queen sees reviews_waiting on her next call');
-    check((await lead.call('review_task', { id: id.ui, verdict: 'approve' })).status === 'done', 'leader approved');
+    check((await lead.call('review_task', { id: id.ui, verdict: 'approve', notes: 'looks good' })).status === 'done', 'leader approved');
 
     console.log('\nleadership transfer');
     check((await lead.call('transfer_leadership', { to: 'm1' })).to === 'm1', 'leader transferred to m1');

@@ -9,7 +9,7 @@ const COLUMNS = [
   ['open', 'Open'], ['assigned', 'Assigned'], ['in_progress', 'In progress'],
   ['blocked', 'Blocked'], ['review', 'Review'], ['done', 'Done · capped'],
 ];
-const ANNOUNCE_KINDS = new Set(['status', 'task_reviewed', 'leader_changed', 'agent_joined']);
+const ANNOUNCE_KINDS = new Set(['status', 'task_reviewed', 'leader_changed', 'agent_joined', 'agent_removed', 'queen_vote']);
 const FILTERS = {
   all: () => true,
   messages: (f) => f.kind === 'message' || f.kind === 'status',
@@ -95,6 +95,7 @@ function render() {
   $('flag-count').textContent = flags ? `· ${flags}` : '';
 
   renderBanner();
+  renderVotes();
   patch('team-list', teamHtml());
   flip('board-cols', () => patch('board-cols', boardHtml()));
   patch('merge-wrap', mergeHtml());
@@ -176,9 +177,75 @@ function renderBanner() {
   announce(`Leader ${l.leader} is offline. Suggested new leader: ${l.propose}.`);
 }
 
+/** Votes to replace the queen: a banner while any exist, and a pop-up when it becomes an emergency. */
+function renderVotes() {
+  const v = state.queen_votes ?? { votes: [], online_workers: 0, emergency: false };
+  const b = $('vote-banner');
+  const key = v.votes.length ? `${v.emergency}|${v.votes.map((x) => `${x.by}:${x.reason}`).join('|')}` : '';
+  if (b.__key !== key) {
+    b.__key = key;
+    if (!key) { b.hidden = true; b.replaceChildren(); }
+    else {
+      const queen = esc(state.leader.leader ?? 'the queen');
+      const n = v.online_workers;
+      b.className = `banner ${v.emergency ? 'vote-emergency' : 'vote-info'}`;
+      b.innerHTML = `<span>${ICON.warn} <strong>${v.emergency
+        ? `Emergency: every online worker wants to replace ${queen}.`
+        : `${v.votes.length} of ${n} online worker${n === 1 ? '' : 's'} voted to replace ${queen}.`}</strong></span>
+        ${v.emergency ? '<button type="button" class="btn danger small" id="vote-open" data-action="em_open">Decide now</button>' : ''}
+        <ul aria-label="Reasons">${v.votes.map((x) => `<li><strong>${esc(x.by)}:</strong> ${esc(x.reason)}</li>`).join('')}</ul>`;
+      b.hidden = false;
+    }
+  }
+  const d = $('emergency');
+  if (!v.emergency) {
+    if (d.open) { d.close(); announce('Emergency resolved. The vote is over.'); }
+    d.__key = null;
+    return;
+  }
+  if (d.__key === key) return; // pop up again only when the votes change
+  d.__key = key;
+  // Don't steal focus from a control the beekeeper is using; open once they leave it.
+  const busy = document.activeElement?.matches?.('input, select, textarea');
+  if (busy) document.activeElement.addEventListener('focusout', () => setTimeout(() => { if (state.queen_votes?.emergency) openEmergency(); }), { once: true });
+  else openEmergency();
+}
+
+function openEmergency() {
+  $('em-error').textContent = '';
+  const v = state.queen_votes;
+  const queen = state.leader.leader ?? 'the queen';
+  $('em-desc').textContent = `${v.votes.length} workers voted to replace ${queen}, including every worker online. You are the beekeeper: crown a new queen, keep ${queen}, reset the workers' work, or remove every worker.`;
+  $('em-votes').innerHTML = v.votes.map((x) => `<li><strong>${esc(x.by)}:</strong> ${esc(x.reason)}</li>`).join('');
+  const candidates = state.agents.filter((a) => a.role !== 'leader' && !a.removed);
+  $('em-new').innerHTML = candidates.map((a) => `<option>${esc(a.name)}</option>`).join('');
+  $('em-crown').disabled = !candidates.length;
+  $('em-keep').textContent = `Keep ${queen}`;
+  const d = $('emergency');
+  if (!d.open) d.showModal();
+}
+
+function removedBeeHtml(a) {
+  return `<li class="bee removed" id="agent-${idSafe(a.id)}" tabindex="-1">
+    <div class="bee-head">
+      <div class="hexav" aria-hidden="true">${initial(a.name)}</div>
+      <div class="bee-name">
+        <div><strong>${esc(a.name)}</strong><span class="chip removed-chip">Removed</span></div>
+        <p class="removed-why">${esc(a.removed.reason ?? 'No reason given')}</p>
+      </div>
+    </div>
+    <div class="bee-foot">
+      <span class="meta">Locked out of the hive</span>
+      <button type="button" class="btn ghost small" id="readmit-${idSafe(a.id)}" data-action="readmit" data-agent="${esc(a.name)}">Let ${esc(a.name)} back in</button>
+    </div>
+  </li>`;
+}
+
 function teamHtml() {
   if (!state.agents.length) return '<li class="empty">No bees yet. Share the join code.</li>';
+  const voters = new Set((state.queen_votes?.votes ?? []).map((v) => v.by));
   return state.agents.map((a) => {
+    if (a.removed) return removedBeeHtml(a);
     const queen = a.role === 'leader';
     const status = !a.online
       ? `<span class="status"><span class="dot"></span>Offline · seen <span data-ago="${a.last_seen}"></span> ago</span>`
@@ -200,7 +267,8 @@ function teamHtml() {
         <div class="bee-name">
           <div><strong>${esc(a.name)}</strong>
             ${queen ? `<span class="chip queen-chip">${ICON.crown} Queen</span>` : '<span class="chip">Worker</span>'}
-            ${a.host ? '<span class="chip">host</span>' : ''}</div>
+            ${a.host ? '<span class="chip">host</span>' : ''}
+            ${voters.has(a.name) ? '<span class="chip vote-chip">Wants a new queen</span>' : ''}</div>
           ${status}
         </div>
       </div>
@@ -208,7 +276,10 @@ function teamHtml() {
       ${drones}
       <div class="bee-foot">
         <span class="meta">${a.claims} claimed cell${a.claims === 1 ? '' : 's'}</span>
-        ${queen ? '' : `<button type="button" class="btn ghost small" id="mk-leader-${idSafe(a.id)}" data-action="set_leader" data-agent="${esc(a.name)}">Crown ${esc(a.name)}</button>`}
+        ${queen ? '' : `<span class="row">
+          <button type="button" class="btn ghost small" id="mk-leader-${idSafe(a.id)}" data-action="set_leader" data-agent="${esc(a.name)}">Crown ${esc(a.name)}</button>
+          <button type="button" class="btn danger small" id="rm-${idSafe(a.id)}" data-action="remove_agent" data-agent="${esc(a.name)}">Remove ${esc(a.name)}</button>
+        </span>`}
       </div>
     </li>`;
   }).join('');
@@ -216,7 +287,7 @@ function teamHtml() {
 
 function boardHtml() {
   const byId = new Map(state.tasks.map((t) => [t.id, t]));
-  const names = state.agents.map((a) => a.name);
+  const names = state.agents.filter((a) => !a.removed).map((a) => a.name);
   return COLUMNS.map(([status, label]) => {
     const tasks = state.tasks.filter((t) => t.status === status);
     return `<div class="col">
@@ -266,11 +337,18 @@ function taskHtml(t, byId, names) {
       ${t.acceptance ? `<p class="desc"><strong>Done when:</strong> ${esc(t.acceptance)}</p>` : ''}
       ${t.files.length ? `<ul class="files" aria-label="Expected files">${t.files.map((f) => `<li><code>${esc(f)}</code></li>`).join('')}</ul>` : ''}
       ${t.branch ? `<div class="meta">Branch <code>${esc(t.branch)}</code></div>` : ''}
+      ${prLink(t.pr, `pr-${t.id}`)}
+      ${t.summary ? `<p class="desc"><strong>${esc(t.owner ?? 'Worker')}'s note:</strong> ${esc(t.summary)}</p>` : ''}
       ${t.review_notes ? `<p class="desc"><strong>Review notes:</strong> ${esc(t.review_notes)}</p>` : ''}
       ${controls}
     </details>
   </li>`;
 }
+
+/** Only real http(s) links become anchors; anything else is shown as text. */
+const prLink = (url, id) => !url ? '' : /^https?:\/\//.test(url)
+  ? `<div class="meta">Pull request <a id="${id}" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url.replace(/^https?:\/\/(www\.)?github\.com\//, ''))}<span class="visually-hidden"> (opens in a new tab)</span></a></div>`
+  : `<div class="meta">Pull request ${esc(url)}</div>`;
 
 const mergeCommand = (branch) => `git checkout main && git pull && git merge --no-ff ${branch} && git push`;
 
@@ -281,7 +359,10 @@ function mergeHtml() {
     <h3 id="merge-h">Ready to merge <span class="plain">· approved by the queen, waiting for a human</span></h3>
     <ul>${q.map((m) => `<li class="cell">
       ${ICON.cell}
-      <div class="cell-body"><span><a href="#task-${m.id}" id="mq-${m.id}">#${m.id}</a> ${esc(m.title)} · by ${esc(m.owner ?? '?')}</span><code>${esc(m.branch)}</code></div>
+      <div class="cell-body"><span><a href="#task-${m.id}" id="mq-${m.id}">#${m.id}</a> ${esc(m.title)} · by ${esc(m.owner ?? '?')}</span><code>${esc(m.branch)}</code>
+        ${prLink(m.pr, `mq-pr-${m.id}`)}
+        ${m.summary ? `<p class="desc"><strong>Why:</strong> ${esc(m.summary)}</p>` : ''}
+        ${m.review_notes ? `<p class="desc"><strong>Queen's review:</strong> ${esc(m.review_notes)}</p>` : ''}</div>
       <div class="merge-actions">
         <button type="button" class="btn small" id="mq-copy-${m.id}" data-action="copy_merge" data-branch="${esc(m.branch)}" aria-label="Copy command for ${esc(m.branch)}">Copy command</button>
         <button type="button" class="btn honey small" id="mq-done-${m.id}" data-action="mark_merged" data-id="${m.id}" aria-label="Mark merged: task #${m.id}">Mark merged</button>
@@ -344,6 +425,11 @@ setInterval(tick, 1000);
 // ───────────── actions ─────────────
 
 function toast(msg) {
+  if ($('emergency').open) { // the toast is inert behind the modal, so report inside it
+    $('em-error').textContent = '';
+    setTimeout(() => { $('em-error').textContent = msg; }, 50);
+    return;
+  }
   $('toast').hidden = false;
   $('toast-msg').textContent = '';
   setTimeout(() => { $('toast-msg').textContent = msg; }, 50); // announce even when the text repeats
@@ -403,6 +489,35 @@ document.addEventListener('click', async (e) => {
     case 'set_leader':
       if (!confirm(`Make ${d.agent} the queen (leader)?`)) return;
       return act({ action: 'set_leader', agent: d.agent }, `${d.agent} is now the queen`);
+    case 'remove_agent': {
+      const reason = prompt(`Why remove ${d.agent}? Every bee will see this. Their files are freed and unfinished tasks reopen.`);
+      if (!reason?.trim()) return;
+      return act({ action: 'remove_agent', agent: d.agent, reason }, `${d.agent} was removed from the hive`);
+    }
+    case 'readmit':
+      if (!confirm(`Let ${d.agent} back into the hive? Their old connection works again.`)) return;
+      return act({ action: 'readmit', agent: d.agent }, `${d.agent} is back in the hive`);
+    case 'em_open':
+      return openEmergency();
+    case 'em_close':
+      return $('emergency').close();
+    case 'em_crown': {
+      const agent = $('em-new').value;
+      if (!agent) return;
+      const r = await act({ action: 'set_leader', agent }, `${agent} is now the queen`);
+      if (r?.ok) $('emergency').close();
+      return;
+    }
+    case 'dismiss_votes':
+    case 'reset_workers':
+    case 'remove_workers': {
+      if (d.action === 'reset_workers' && !confirm("Reset the workers' work? Their files are freed and unfinished tasks reopen. Work already in review is kept.")) return;
+      if (d.action === 'remove_workers' && !confirm('Remove every worker from the hive? They are locked out, their files are freed and their unfinished tasks reopen. The queen stays. You can let bees back in one by one.')) return;
+      const done = { dismiss_votes: 'Kept the queen; votes cleared', reset_workers: "Workers' work reset", remove_workers: 'All workers removed' };
+      const r = await act({ action: d.action }, done[d.action]);
+      if (r?.ok) $('emergency').close();
+      return;
+    }
   }
 });
 

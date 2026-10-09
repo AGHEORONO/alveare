@@ -73,6 +73,7 @@
     </header>
 
     <div id="banner" class="banner" hidden></div>
+    <div id="vote-banner" class="banner" hidden></div>
     <div id="announcer" class="visually-hidden" aria-live="polite"></div>
 
     <main id="main" tabindex="-1">
@@ -131,6 +132,26 @@
         <svg viewBox="0 0 24 24" aria-hidden="true" class="icon"><path d="M3 12 C6 6 9 18 12 12 C15 6 18 18 21 12"/></svg>Waggle
       </button>
     </nav>
+
+    <dialog id="emergency" class="emergency" aria-labelledby="em-title" aria-describedby="em-desc">
+      <h2 id="em-title">Emergency: the workers want a new queen</h2>
+      <p id="em-desc"></p>
+      <h3 id="em-votes-h">Their reasons</h3>
+      <ul id="em-votes" aria-labelledby="em-votes-h"></ul>
+      <div class="em-actions">
+        <div class="row">
+          <label for="em-new">New queen</label>
+          <select id="em-new"></select>
+          <button type="button" class="btn honey" id="em-crown" data-action="em_crown">Crown</button>
+        </div>
+        <button type="button" class="btn" id="em-keep" data-action="dismiss_votes">Keep the queen</button>
+        <button type="button" class="btn" id="em-reset" data-action="reset_workers" aria-describedby="em-hint">Reset work</button>
+        <button type="button" class="btn danger" id="em-remove" data-action="remove_workers" aria-describedby="em-hint">Remove all workers</button>
+        <button type="button" class="btn ghost" id="em-later" data-action="em_close">Decide later</button>
+      </div>
+      <p id="em-error" class="error" role="alert"></p>
+      <p id="em-hint" class="hint"><strong>Reset work</strong> frees every worker's files and reopens their unfinished tasks so the queen hands them out again; the workers stay and work already in review is kept. <strong>Remove all workers</strong> locks every worker out of the hive, frees their files and reopens their unfinished tasks; the queen stays, and you can let bees back in one by one.</p>
+    </dialog>
 
     <div id="toast" class="toast" hidden><p id="toast-msg" role="alert"></p><button type="button" class="btn ghost small" id="toast-close">Dismiss</button></div>
   </div>

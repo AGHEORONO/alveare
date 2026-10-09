@@ -19,12 +19,13 @@ export interface HiveOptions {
 export interface AgentRow {
   id: string; name: string; token_hash: string; is_host: number;
   created_at: number; last_seen_at: number; last_read_msg_id: number;
+  removed_at: number | null; removed_reason: string | null;
 }
 export interface TaskRow {
   id: number; title: string; description: string; acceptance: string; status: TaskStatus;
   blocked_from: TaskStatus | null; owner_id: string | null; priority: number; branch: string | null;
   review_notes: string | null; created_by: string | null; created_at: number; updated_at: number;
-  merged_at: number | null;
+  merged_at: number | null; summary: string | null; pr_url: string | null;
 }
 export interface ClaimRow {
   id: number; agent_id: string; pattern: string; task_id: number | null;
@@ -52,7 +53,10 @@ export interface PlanTaskInput extends Omit<TaskInput, 'depends_on'> {
 
 export interface ClaimConflict { path: string; held: string; by: string; task: number | null; expires_in_s: number }
 
-const JOIN_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // no 0/O/1/I
+/** A lone worker can't trigger a queen emergency. */
+export const MIN_EMERGENCY_VOTES = 2;
+
+const JOIN_ALPHABET ='23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // no 0/O/1/I
 
 export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -123,6 +127,14 @@ export class Hive {
       const now = this.now();
       const existing = this.agentByName(clean);
       let id: string;
+      if (existing?.removed_at) {
+        // The host's own agent can always come back; anyone else needs a human to let them in.
+        if (!opts.isHost) {
+          throw new HiveError('forbidden', `${existing.name} was removed from the hive: ${existing.removed_reason ?? 'no reason given'}`, {},
+            'ask the beekeeper (a human) to let you back in from the dashboard');
+        }
+        this.db.prepare('UPDATE agents SET removed_at = NULL, removed_reason = NULL WHERE id = ?').run(existing.id);
+      }
       if (existing) {
         id = existing.id;
         this.db.prepare('UPDATE agents SET token_hash = ?, last_seen_at = ? WHERE id = ?').run(hashToken(token), now, id);
@@ -139,8 +151,14 @@ export class Hive {
     });
   }
 
+  /** The agent owning this token, unless it was removed from the hive. */
   authenticate(token: string): AgentRow | null {
-    return (this.db.prepare('SELECT * FROM agents WHERE token_hash = ?').get(hashToken(token)) as AgentRow) ?? null;
+    return (this.db.prepare('SELECT * FROM agents WHERE token_hash = ? AND removed_at IS NULL').get(hashToken(token)) as AgentRow) ?? null;
+  }
+
+  /** A removed agent's row for this token, so it can be told why it was locked out. */
+  removedAgent(token: string): AgentRow | null {
+    return (this.db.prepare('SELECT * FROM agents WHERE token_hash = ? AND removed_at IS NOT NULL').get(hashToken(token)) as AgentRow) ?? null;
   }
 
   agent(id: string): AgentRow {
@@ -163,12 +181,19 @@ export class Hive {
     return a;
   }
 
+  /** Like resolveAgent, but refuses bees that were removed from the hive. */
+  activeAgent(nameOrId: string): AgentRow {
+    const a = this.resolveAgent(nameOrId);
+    if (a.removed_at) throw new HiveError('bad_state', `${a.name} was removed from the hive`, {}, 'pick another bee (list_agents)');
+    return a;
+  }
+
   agents(): AgentRow[] {
     return this.db.prepare('SELECT * FROM agents ORDER BY created_at').all() as AgentRow[];
   }
 
   isOnline(a: AgentRow): boolean {
-    return this.now() - a.last_seen_at <= this.onlineWindowMs;
+    return !a.removed_at && this.now() - a.last_seen_at <= this.onlineWindowMs;
   }
 
   /** Record activity: marks the agent online and renews all of its claims. */
@@ -198,9 +223,10 @@ export class Hive {
   transferLeadership(actor: Actor, to: string): { from: string | null; to: string } {
     this.requireLeader(actor, 'transfer_leadership');
     return this.tx(() => {
-      const target = this.resolveAgent(to);
+      const target = this.activeAgent(to);
       const prev = this.leaderId();
       this.setMeta('leader_id', target.id);
+      this.clearVotes(); // votes were against the old queen
       const prevName = prev ? this.agent(prev).name : null;
       this.insertMessage(null, 'agent', target.id,
         `You are now the Hive leader${prevName ? ` (from ${prevName})` : ''}. Run whoami, read_messages, list_tasks.`, null);
@@ -232,6 +258,178 @@ export class Hive {
       offline_for_s: Number.isFinite(offlineFor) ? Math.round(offlineFor / 1000) : -1,
       propose,
     };
+  }
+
+  // ───────────────────────── removal and votes ─────────────────────────
+
+  /**
+   * Throw a bee out of the hive: its token stops working, its claims are freed and its unfinished
+   * tasks reopen (work already in review stays there). The queen can't remove a bee that has
+   * voted to replace her; that call belongs to the beekeeper (a human).
+   */
+  removeAgent(actor: Actor, name: string, reason: string): { removed: string; reopened: number[] } {
+    this.requireLeader(actor, 'remove_agent');
+    const why = reason?.trim();
+    if (!why) throw new HiveError('invalid', 'a reason is required; every bee and the beekeeper will see it');
+    return this.tx(() => {
+      const target = this.activeAgent(name);
+      if (target.id === this.leaderId()) {
+        throw new HiveError('forbidden', `${target.name} is the queen`, {}, actor === null ? 'crown another bee first' : 'use transfer_leadership instead');
+      }
+      if (actor !== null && this.voteOf(target.id)) {
+        throw new HiveError('forbidden', `${target.name} has voted to replace you, so only the beekeeper (a human) can remove them`, {},
+          'explain your side with send_message("all", ...); the beekeeper sees the votes on the dashboard');
+      }
+      this.db.prepare('UPDATE agents SET removed_at = ?, removed_reason = ? WHERE id = ?').run(this.now(), why, target.id);
+      this.db.prepare('DELETE FROM queen_votes WHERE agent_id = ?').run(target.id);
+      const reopened = this.releaseAgentWork(target.id);
+      const by = actor === null ? 'the beekeeper' : 'the queen';
+      this.insertMessage(actor, 'all', null, `${target.name} was removed from the hive by ${by}: ${why}.${reopened.length ? ` Reopened tasks: ${reopened.map((i) => `#${i}`).join(', ')}.` : ''}`, null);
+      this.event('agent_removed', { agent_id: target.id, data: { reason: why, by: actor === null ? 'human' : 'queen', reopened } });
+      this.refreshEmergency();
+      this.onChange('agents');
+      return { removed: target.name, reopened };
+    });
+  }
+
+  /** A human lets a removed bee back in; its old token works again. */
+  readmitAgent(name: string): { readmitted: string } {
+    return this.tx(() => {
+      const a = this.resolveAgent(name);
+      if (!a.removed_at) throw new HiveError('bad_state', `${a.name} is not removed`);
+      this.db.prepare('UPDATE agents SET removed_at = NULL, removed_reason = NULL WHERE id = ?').run(a.id);
+      this.insertMessage(null, 'all', null, `The beekeeper let ${a.name} back into the hive.`, null);
+      this.event('agent_readmitted', { agent_id: a.id });
+      this.onChange('agents');
+      return { readmitted: a.name };
+    });
+  }
+
+  /** Free an agent's claims and reopen its unfinished tasks. Returns the reopened task ids. */
+  private releaseAgentWork(agentId: string): number[] {
+    const r = this.db.prepare('DELETE FROM claims WHERE agent_id = ?').run(agentId);
+    if (r.changes) this.onChange('claims');
+    const reopened = this.tasks({ owner: agentId })
+      .filter((t) => t.status === 'assigned' || t.status === 'in_progress' || t.status === 'blocked')
+      .map((t) => t.id);
+    for (const id of reopened) this.setTask(id, { status: 'open', owner_id: null, blocked_from: null });
+    return reopened;
+  }
+
+  private voteOf(agentId: string): { reason: string } | null {
+    return (this.db.prepare('SELECT reason FROM queen_votes WHERE agent_id = ? AND queen_id = ?').get(agentId, this.leaderId()) as { reason: string }) ?? null;
+  }
+
+  /**
+   * Votes against the current queen. It's an emergency for the beekeeper once at least two workers
+   * voted and every online worker has (votes from bees that went offline still count).
+   */
+  queenVotes(): { votes: { by: string; reason: string; at: number }[]; online_workers: number; emergency: boolean } {
+    const queen = this.leaderId();
+    const rows = (queen ? this.db.prepare(
+      'SELECT v.agent_id, v.reason, v.created_at FROM queen_votes v JOIN agents a ON a.id = v.agent_id WHERE v.queen_id = ? AND a.removed_at IS NULL ORDER BY v.created_at',
+    ).all(queen) : []) as { agent_id: string; reason: string; created_at: number }[];
+    const voters = new Set(rows.map((r) => r.agent_id));
+    const online = this.agents().filter((a) => a.id !== queen && this.isOnline(a));
+    return {
+      votes: rows.map((r) => ({ by: this.agent(r.agent_id).name, reason: r.reason, at: r.created_at })),
+      online_workers: online.length,
+      emergency: rows.length >= MIN_EMERGENCY_VOTES && online.every((a) => voters.has(a.id)),
+    };
+  }
+
+  voteReplaceQueen(agentId: string, reason: string): ReturnType<Hive['queenVotes']> {
+    const why = reason?.trim();
+    if (!why) throw new HiveError('invalid', 'say why the queen should be replaced; the beekeeper reads it');
+    return this.tx(() => {
+      this.touch(agentId);
+      const queen = this.leaderId();
+      if (!queen) throw new HiveError('bad_state', 'there is no queen');
+      if (agentId === queen) throw new HiveError('forbidden', "the queen can't vote against herself", {}, 'use transfer_leadership to hand over');
+      this.db.prepare(`INSERT INTO queen_votes(agent_id, queen_id, reason, created_at) VALUES(?, ?, ?, ?)
+        ON CONFLICT(agent_id) DO UPDATE SET queen_id = excluded.queen_id, reason = excluded.reason, created_at = excluded.created_at`)
+        .run(agentId, queen, why, this.now());
+      const v = this.queenVotes();
+      this.insertMessage(agentId, 'leader', null, `I voted to replace the queen (${v.votes.length} of ${v.online_workers} online workers so far): ${why}`, null);
+      this.event('queen_vote', { agent_id: agentId, data: { reason: why } });
+      this.refreshEmergency();
+      this.onChange('agents');
+      return this.queenVotes();
+    });
+  }
+
+  withdrawVote(agentId: string): { withdrawn: boolean } {
+    return this.tx(() => {
+      this.touch(agentId);
+      const r = this.db.prepare('DELETE FROM queen_votes WHERE agent_id = ?').run(agentId);
+      if (r.changes) {
+        this.event('vote_withdrawn', { agent_id: agentId });
+        this.refreshEmergency();
+        this.onChange('agents');
+      }
+      return { withdrawn: r.changes > 0 };
+    });
+  }
+
+  /** Raise the emergency (once) when enough workers voted (see queenVotes); lower it when that's no longer true. */
+  private refreshEmergency(): void {
+    const v = this.queenVotes();
+    const raised = this.getMeta('queen_emergency') !== null;
+    if (v.emergency && !raised) {
+      this.setMeta('queen_emergency', String(this.now()));
+      this.insertMessage(null, 'all', null,
+        'Every online worker voted to replace the queen. The beekeeper (a human) has been alerted and will decide. Keep working on your current task meanwhile.', null);
+      this.event('queen_emergency', { agent_id: this.leaderId(), data: { votes: v.votes.length } });
+    } else if (!v.emergency && raised) {
+      this.setMeta('queen_emergency', null);
+    }
+  }
+
+  private clearVotes(): void {
+    this.db.prepare('DELETE FROM queen_votes').run();
+    this.setMeta('queen_emergency', null);
+  }
+
+  /** The beekeeper keeps the current queen: votes are cleared and everyone is told. */
+  dismissVotes(): { kept: string | null } {
+    return this.tx(() => {
+      const queen = nameOrNull(this, this.leaderId());
+      this.clearVotes();
+      this.insertMessage(null, 'all', null, `The beekeeper kept ${queen ?? 'the queen'} as queen and cleared the votes. Follow the queen's plan.`, null);
+      this.event('votes_dismissed', { agent_id: this.leaderId() });
+      this.onChange('agents');
+      return { kept: queen };
+    });
+  }
+
+  /**
+   * The beekeeper resets every worker: claims freed, unfinished tasks reopened, votes cleared.
+   * Workers stay in the hive and wait for the queen to hand out work again.
+   */
+  resetWorkers(): { reset: string[]; reopened: number[] } {
+    return this.tx(() => {
+      const queen = this.leaderId();
+      const workers = this.agents().filter((a) => a.id !== queen && !a.removed_at);
+      const reopened = workers.flatMap((a) => this.releaseAgentWork(a.id));
+      this.clearVotes();
+      this.insertMessage(null, 'all', null,
+        `The beekeeper reset all workers: your claims were released and unfinished tasks reopened${reopened.length ? ` (${reopened.map((i) => `#${i}`).join(', ')})` : ''}. Stop what you were doing, run whoami, read_messages, list_tasks, and wait for the queen to assign work. Queen: re-plan and assign.`, null);
+      this.event('workers_reset', { data: { workers: workers.length, reopened } });
+      this.onChange('agents');
+      return { reset: workers.map((a) => a.name), reopened };
+    });
+  }
+
+  /** The beekeeper throws out every worker at once (e.g. the whole colony went rogue). The queen stays. */
+  removeAllWorkers(reason: string): { removed: string[]; reopened: number[] } {
+    return this.tx(() => {
+      const queen = this.leaderId();
+      const out = this.agents()
+        .filter((a) => a.id !== queen && !a.removed_at)
+        .map((a) => this.removeAgent(null, a.name, reason));
+      this.clearVotes();
+      return { removed: out.map((r) => r.removed), reopened: out.flatMap((r) => r.reopened) };
+    });
   }
 
   // ───────────────────────── tasks ─────────────────────────
@@ -345,7 +543,7 @@ export class Hive {
     if (t.status !== 'open' && t.status !== 'assigned') {
       throw new HiveError('bad_state', `task ${id} is ${t.status}`, { status: t.status }, 'use reassign_task for started tasks');
     }
-    const target = this.resolveAgent(agentName);
+    const target = this.activeAgent(agentName);
     this.setTask(id, { status: 'assigned', owner_id: target.id });
     this.insertMessage(actor, 'agent', target.id, `Assigned to you: task #${id} "${t.title}". claim_task(${id}) to start.`, id);
     this.event('task_assigned', { agent_id: target.id, task_id: id });
@@ -357,7 +555,7 @@ export class Hive {
     return this.tx(() => {
       const t = this.task(id);
       if (t.status === 'done') throw new HiveError('bad_state', `task ${id} is done`);
-      const target = this.resolveAgent(agentName);
+      const target = this.activeAgent(agentName);
       if (t.owner_id === target.id) throw new HiveError('bad_state', `task ${id} is already owned by ${target.name}`);
       const from = t.owner_id ? this.agent(t.owner_id).name : null;
       const status: TaskStatus = t.status === 'open' ? 'assigned' : t.status;
@@ -418,8 +616,12 @@ export class Hive {
     });
   }
 
-  /** Member-driven transitions: in_progress, review, blocked (and unblock back to in_progress). */
-  updateTask(actor: Actor, id: number, status: TaskStatus, note?: string): TaskRow {
+  /**
+   * Member-driven transitions: in_progress, review, blocked (and unblock back to in_progress).
+   * Agents sending work to review must explain it in `note`; it stays on the task for reviewers
+   * (dashboard, PR). `pr` optionally links the pull request.
+   */
+  updateTask(actor: Actor, id: number, status: TaskStatus, note?: string, pr?: string): TaskRow {
     return this.tx(() => {
       if (actor) this.touch(actor);
       const t = this.task(id);
@@ -431,13 +633,18 @@ export class Hive {
       switch (status) {
         case 'review':
           if (t.status !== 'in_progress') throw bad();
-          this.setTask(id, { status: 'review' });
+          if (actor !== null && !note?.trim()) {
+            throw new HiveError('invalid', 'a short note is required: what changed, why, and any decision the reviewer should know', {},
+              'call update_task again with note: "What: ... Why: ... Decisions: ..." (2-3 lines; more only if needed)');
+          }
+          if (pr !== undefined && !/^https?:\/\/\S+$/.test(pr.trim())) throw new HiveError('invalid', 'pr must be the pull request URL');
+          this.setTask(id, { status: 'review', ...(note?.trim() ? { summary: note.trim() } : {}), ...(pr ? { pr_url: pr.trim() } : {}) });
           this.releaseTaskClaims(id);
           if (t.owner_id && t.owner_id === this.leaderId() && !this.independentQueen()) {
             // The queen can't review her own work: ask the other bees instead of messaging herself.
             this.insertMessage(actor, 'all', null, `The queen's task #${id} "${t.title}" needs a reviewer (branch ${t.branch}). Any bee may review_task ${id}.${note ? ` Note: ${note}` : ''}`, id);
           } else if (this.leaderId()) {
-            this.insertMessage(actor, 'leader', null, `Task #${id} "${t.title}" is ready for review (branch ${t.branch})${note ? `: ${note}` : ''}`, id);
+            this.insertMessage(actor, 'leader', null, `Task #${id} "${t.title}" is ready for review (branch ${t.branch}${pr ? `, PR ${pr}` : ''})${note ? `: ${note}` : ''}`, id);
           }
           break;
         case 'blocked':
@@ -494,6 +701,10 @@ export class Hive {
         { reviewers: others },
         others.length ? `send_message to ${others[0]} asking them to review_task ${id}` : 'ask a human to review it on the dashboard, or turn Independent queen on');
     }
+    if (actor !== null && !notes?.trim()) {
+      throw new HiveError('invalid', 'review notes are required: one or two lines on why you approve or what must change', {},
+        'call review_task again with notes');
+    }
     return this.tx(() => {
       const t = this.task(id);
       if (t.status !== 'review') throw new HiveError('bad_state', `task ${id} is ${t.status}, not review`, { status: t.status });
@@ -546,7 +757,7 @@ export class Hive {
     return this.task(id);
   }
 
-  private setTask(id: number, fields: Partial<Pick<TaskRow, 'status' | 'owner_id' | 'blocked_from' | 'review_notes'>>): void {
+  private setTask(id: number, fields: Partial<Pick<TaskRow, 'status' | 'owner_id' | 'blocked_from' | 'review_notes' | 'summary' | 'pr_url'>>): void {
     const keys = Object.keys(fields) as (keyof typeof fields)[];
     const sets = keys.map((k) => `${k} = @${k}`).join(', ');
     this.db.prepare(`UPDATE tasks SET ${sets}, updated_at = @now WHERE id = @id`).run({ ...fields, id, now: this.now() });
@@ -790,6 +1001,10 @@ export class Hive {
         e.data === undefined ? null : JSON.stringify(e.data));
     this.onChange('events');
   }
+}
+
+function nameOrNull(hive: Hive, id: string | null): string | null {
+  return id ? hive.agent(id).name : null;
 }
 
 /** Dedupe patterns ignoring case, keeping the first spelling. */
